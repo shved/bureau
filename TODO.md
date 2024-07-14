@@ -1,0 +1,4 @@
+- [ ] change dump Arc 'database' to LSM with channels
+- [ ] add shutdown to server
+- [ ] add tracing
+- [ ] 
