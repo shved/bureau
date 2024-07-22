@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-// TODO: Extract request handler into a module.
+// TODO: Extract request handler into a module for better testing.
 fn handle_request(line: &str, db: &Mutex<Engine>) -> Response {
     let request = match Request::parse(line) {
         Ok(req) => req,

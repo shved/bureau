@@ -15,7 +15,6 @@ const SSTABLE_BYTESIZE: usize = 64 * 1024; // 64KB (16 blocks).
 #[derive(Debug)]
 pub struct MemTable {
     map: BTreeMap<Bytes, Bytes>,
-    wal: Wal,
     size: usize,
 }
 
@@ -28,7 +27,6 @@ impl MemTable {
     pub fn new() -> MemTable {
         MemTable {
             map: BTreeMap::new(),
-            wal: Wal {},
             size: 0,
         }
     }
@@ -47,8 +45,13 @@ impl MemTable {
         InsertResult::Available
     }
 
-    pub fn get(&self, key: Bytes) -> Option<Bytes> {
-        self.map.get(&key).map(|e| e.clone())
+    pub fn get(&self, key: &Bytes) -> Option<Bytes> {
+        self.map.get(key).map(|v| v.clone())
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.size = 0;
     }
 
     fn update_size(&mut self, key: &Bytes, value: &Bytes) {
