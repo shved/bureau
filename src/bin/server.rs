@@ -15,8 +15,8 @@ enum Request {
 }
 
 enum Response {
-    Get { key: Bytes, value: Bytes },
-    Set { key: String, value: String },
+    Get { key: String, value: Bytes },
+    Set { key: String, value: Bytes },
     Error { msg: String },
 }
 
@@ -85,7 +85,10 @@ fn handle_request(line: &str, db: &Mutex<Engine>) -> Response {
         },
         Request::Set { key, value } => {
             db.insert(key.clone().into(), value.clone().into());
-            Response::Set { key, value }
+            Response::Set {
+                key,
+                value: value.into(),
+            }
         }
     }
 }
@@ -128,7 +131,7 @@ impl Response {
         match *self {
             Response::Get { ref key, ref value } => format!("{:?} = {:?}", key, value),
             Response::Set { ref key, ref value } => {
-                format!("set {} = `{}`", key, value)
+                format!("set {} = `{:?}`", key, value)
             }
             Response::Error { ref msg } => format!("error: {}", msg),
         }
