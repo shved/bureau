@@ -7,39 +7,35 @@ mod wal;
 
 use bytes::Bytes;
 
-/*
-TODO:
-Here engine will run a process accepting messages on the channel and
-calling set and get.
-
-fn run() {
-    let(tx, mut rx) = mpsc::channel(1000);
-
-    while let Some(message) = rx.recv().await {
-        println!("GOT = {}", message);
-    }
- }
-*/
-
 #[derive(Debug)]
 pub struct Engine {
-    db: memtable::MemTable,
+    memtable: memtable::MemTable,
+    shadow_table: memtable::MemTable,
+    index: index::Index,
 }
 
 impl Engine {
     pub fn new() -> Engine {
         Engine {
-            db: memtable::MemTable::new(),
+            memtable: memtable::MemTable::new(),
+            shadow_table: memtable::MemTable::new(),
+            index: index::Index::new(),
         }
     }
 
-    fn run() {}
-
     pub fn insert(&mut self, key: Bytes, value: Bytes) {
-        self.db.insert(key, value)
+        match self.memtable.insert(key, value) {
+            memtable::InsertResult::Full => self.swap_tables(),
+            _ => (),
+        }
     }
 
     pub fn get(&self, key: Bytes) -> Option<Bytes> {
-        self.db.get(key)
+        self.memtable.get(key)
+    }
+
+    // Swap memtable and shadow table to data while sstable is building.
+    fn swap_tables(&mut self) {
+        unimplemented!("TODO")
     }
 }

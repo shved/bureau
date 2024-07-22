@@ -1,9 +1,5 @@
 use crate::engine::block::Block;
 
-// TODO: Check how it really lays out on disk and play with this number.
-// The original idea is that it should be fiting the fs page.
-const SSTABLE_BYTESIZE: usize = 64 * 1024;
-
 #[derive(Debug)]
 struct SSTable {
     // size: u8,
@@ -14,6 +10,7 @@ struct SSTable {
 
 #[derive(Debug)]
 struct TableMetadata {
+    name: String, // NOTE: timestamp_created+checksum.
     index_offset: u16,
     index: Vec<BlockIndex>,
     checksum: Vec<u16>,

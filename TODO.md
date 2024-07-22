@@ -1,4 +1,11 @@
 - [ ] change dump Arc 'database' to LSM with channels
+- [ ] index to track sstables
 - [ ] add shutdown to server
 - [ ] add tracing
-- [ ] 
+- [ ] json response + schema
+- [ ] write sstable when memtable grows to limit
+- [ ] compaction of old memtables
+- [ ] make a statistics unit
+  - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
+  - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram histogram)
+- [ ] cache and cache strategies
