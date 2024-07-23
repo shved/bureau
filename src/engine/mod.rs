@@ -5,10 +5,27 @@ mod memtable;
 mod sstable;
 mod wal;
 
+use crate::{Responder, Result};
 use bytes::Bytes;
+use tokio::sync::mpsc;
+
+pub enum Command {
+    Get {
+        key: Bytes,
+        responder: Responder<Option<Bytes>>,
+    },
+    Set {
+        key: Bytes,
+        value: Bytes,
+        responder: Responder<()>,
+    },
+}
 
 #[derive(Debug)]
 pub struct Engine {
+    input_rx: mpsc::Receiver<Command>,
+    // TODO: Channel to shutdown + tokio::select! inside run loop.
+    // shutdown_rx: mpsc::Receiver<Command>,
     memtable: memtable::MemTable,
     shadow_table: memtable::MemTable,
     index: index::Index,
@@ -17,8 +34,9 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new() -> Engine {
+    pub fn new(rx: mpsc::Receiver<Command>) -> Engine {
         Engine {
+            input_rx: rx,
             memtable: memtable::MemTable::new(),
             shadow_table: memtable::MemTable::new(),
             shadow_table_written: true,
@@ -27,28 +45,70 @@ impl Engine {
         }
     }
 
-    pub fn insert(&mut self, key: Bytes, value: Bytes) {
-        match self.memtable.insert(key, value) {
-            memtable::InsertResult::Full => self.swap_tables(),
-            _ => (),
+    pub async fn run(mut self) {
+        // TODO: Change it to select! here to handle shutdown.
+        while let Some(cmd) = self.input_rx.recv().await {
+            match cmd {
+                Command::Get { key, responder } => {
+                    let res = self.get(key).await;
+                    responder.send(res).unwrap();
+                }
+                Command::Set {
+                    key,
+                    value,
+                    responder,
+                } => {
+                    let res = self.insert(key, value);
+                    responder.send(res).unwrap();
+                }
+            }
         }
     }
 
-    pub fn get(&self, key: Bytes) -> Option<Bytes> {
+    fn insert(&mut self, key: Bytes, value: Bytes) -> Result<()> {
+        match self.memtable.insert(key, value) {
+            memtable::InsertResult::Full => {
+                self.swap_tables();
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn get(&self, key: Bytes) -> Result<Option<Bytes>> {
+        if let Some(value) = self.get_from_mem(&key) {
+            return Ok(Some(value));
+        }
+
+        Ok(None)
+
+        // match self.get_from_index(key).await {
+        //     Ok(res) => match res {
+        //         Some(value) => Ok(Some(value)),
+        //         None => Ok(None),
+        //     },
+        //     Err(e) => Err(e),
+        // }
+    }
+
+    // It only checks hot spots: cache, memtable, shadow table.
+    fn get_from_mem(&self, key: &Bytes) -> Option<Bytes> {
         // TODO: First search cache.
 
-        if let Some(value) = self.memtable.get(&key) {
+        if let Some(value) = self.memtable.get(key) {
             return Some(value);
         }
 
-        if let Some(value) = self.shadow_table.get(&key) {
+        if let Some(value) = self.shadow_table.get(key) {
             return Some(value);
         }
-
-        // TODO: Then search index.
-        // self.search_index(&key)
 
         None
+    }
+
+    async fn get_from_index(&self, key: Bytes) -> Result<Option<Bytes>> {
+        // unimplemented!("TODO: Make it go to disk search sstables.");
+        Ok(None)
     }
 
     // Swap memtable and shadow table to data while sstable is building.
