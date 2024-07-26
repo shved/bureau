@@ -53,3 +53,16 @@ struct Value {
 pub fn entry_size(key: &Bytes, value: &Bytes) -> usize {
     KEYVAL_LEN_BYTESIZE + &key.len() + KEYVAL_LEN_BYTESIZE + &value.len() + OFFSET_BYTESIZE
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entry_size() {
+        assert_eq!(
+            super::entry_size(&Bytes::from("foo"), &Bytes::from("bar")),
+            12
+        );
+    }
+}
