@@ -12,3 +12,11 @@
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
   - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram histogram)
 - [ ] cache and cache strategies
+
+notes for case study:
+- first idea was to take AVL-tree for a memtable, but compared to std-lib BTreeMap performance should not be significantly better, so just stick with btreemap from the std
+- shadow table is a concept to release the lock immediately while sstable is being compacted and written to disk.
+- cache, memtable and shadow mem are always the same position. these are not present in index. index is only for sstables.
+- is index entry a file name?
+- paths to write to get from here: https://www.pathname.com/fhs/pub/fhs-2.3.html#THEVARHIERARCHY (/var)
+- how to protect shadow table for the moment sstable is not yet written to disk
