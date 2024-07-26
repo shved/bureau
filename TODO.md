@@ -1,5 +1,8 @@
-- [ ] change dump Arc 'database' to LSM with channels
+- [x] change dump Arc 'database' to LSM with channels
+- [ ] add server logs
+- [ ] write sstable after memtable is full
 - [ ] index to track sstables
+- [ ] forward 'get' to sstable index when no value in memtable
 - [ ] add shutdown to server
 - [ ] add tracing
 - [ ] json response + schema

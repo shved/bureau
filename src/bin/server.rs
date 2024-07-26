@@ -2,12 +2,13 @@ use bytes::Bytes;
 use futures::SinkExt;
 use std::env;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
-use bureau::engine::Engine;
+use bureau::engine::{Command, Engine};
+use bureau::Result;
 
 enum Request {
     Get { key: String },
@@ -30,28 +31,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&addr).await?;
     println!("Listening on: {}", addr);
 
-    let engine = Arc::new(Mutex::new(Engine::new()));
+    let (req_tx, req_rx) = mpsc::channel(64);
+    // let (sst_tx, mut sst_rx) = mpsc::channel(req_chan_cap / 2);
+    // let engine = Engine::new(req_rx, sst_rx);
+    let engine = Engine::new(req_rx);
 
-    // TODO: Extract loop into a server module.
+    tokio::spawn(engine.run());
+
     loop {
-        let engine_instance = engine.clone();
+        let req_tx = req_tx.clone();
 
         match listener.accept().await {
             Ok((socket, _)) => {
                 tokio::spawn(async move {
                     let mut lines = Framed::new(socket, LinesCodec::new());
 
-                    while let Some(result) = lines.next().await {
+                    if let Some(result) = lines.next().await {
                         match result {
-                            Ok(line) => {
-                                let response = handle_request(&line, &*engine_instance);
+                            Ok(line) => match Request::parse(&line) {
+                                Ok(request) => {
+                                    let response = handle_request(request, req_tx).await;
+                                    let serialized = response.serialize();
 
-                                let response = response.serialize();
-
-                                if let Err(e) = lines.send(response.as_str()).await {
-                                    println!("error on sending response; error = {:?}", e);
+                                    if let Err(e) = lines.send(serialized.as_str()).await {
+                                        println!("error on sending response; error = {:?}", e);
+                                    }
                                 }
-                            }
+                                Err(e) => {
+                                    let response = Response::Error {
+                                        msg: format!("could not parse command: {}", e),
+                                    };
+                                    let serialized = response.serialize();
+
+                                    if let Err(e) = lines.send(serialized.as_str()).await {
+                                        println!("error on sending response; error = {:?}", e);
+                                    }
+                                }
+                            },
                             Err(e) => {
                                 println!("error on decoding from socket; error = {:?}", e);
                             }
@@ -64,43 +80,69 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-// TODO: Extract request handler into a module for better testing.
-fn handle_request(line: &str, db: &Mutex<Engine>) -> Response {
-    let request = match Request::parse(line) {
-        Ok(req) => req,
-        Err(e) => return Response::Error { msg: e },
-    };
-
-    let mut db = db.lock().unwrap();
-
+async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Response {
     match request {
-        Request::Get { key } => match db.get(key.clone().into()) {
-            Some(value) => Response::Get {
-                key: key.into(),
-                value: value.clone(),
-            },
-            None => Response::Error {
-                msg: format!("no key {}", key),
-            },
-        },
+        Request::Get { key } => {
+            let (resp_tx, resp_rx) = oneshot::channel();
+
+            let cmd = Command::Get {
+                key: Bytes::from(key.clone()),
+                responder: resp_tx,
+            };
+
+            if let Err(e) = req_tx.send(cmd).await {
+                return Response::Error { msg: e.to_string() };
+            }
+
+            let resp = resp_rx.await.unwrap();
+
+            match resp {
+                Ok(option) => match option {
+                    Some(value) => Response::Get {
+                        key: key.into(),
+                        value: value.clone(),
+                    },
+                    None => Response::Error {
+                        msg: "no value for given key".to_string(),
+                    },
+                },
+                Err(e) => Response::Error { msg: e.to_string() },
+            }
+        }
         Request::Set { key, value } => {
-            db.insert(key.clone().into(), value.clone().into());
-            Response::Set {
-                key,
-                value: value.into(),
+            let (resp_tx, resp_rx) = oneshot::channel();
+
+            let cmd = Command::Set {
+                key: Bytes::from(key.clone()),
+                value: Bytes::from(value.clone()),
+                responder: resp_tx,
+            };
+
+            if let Err(e) = req_tx.send(cmd).await {
+                return Response::Error { msg: e.to_string() };
+            }
+
+            let resp = resp_rx.await.unwrap();
+
+            match resp {
+                Ok(_) => Response::Set {
+                    key: key.into(),
+                    value: Bytes::from(value),
+                },
+                Err(e) => Response::Error { msg: e.to_string() },
             }
         }
     }
 }
 
 impl Request {
-    fn parse(input: &str) -> Result<Request, String> {
+    fn parse(input: &str) -> Result<Request> {
         let mut parts = input.splitn(3, ' ');
         match parts.next() {
             Some("GET") => {
                 let key = parts.next().ok_or("GET must be followed by a key")?;
                 if parts.next().is_some() {
-                    return Err("GET's key must not be followed by anything".into());
+                    Err("GET's key must not be followed by anything")?
                 }
                 Ok(Request::Get {
                     key: key.to_string(),
@@ -109,19 +151,19 @@ impl Request {
             Some("SET") => {
                 let key = match parts.next() {
                     Some(key) => key,
-                    None => return Err("SET must be followed by a key".into()),
+                    None => Err("SET must be followed by a key")?,
                 };
                 let value = match parts.next() {
                     Some(value) => value,
-                    None => return Err("SET needs a value".into()),
+                    None => Err("SET needs a value")?,
                 };
                 Ok(Request::Set {
                     key: key.to_string(),
                     value: value.to_string(),
                 })
             }
-            Some(cmd) => Err(format!("unknown command: {}", cmd)),
-            None => Err("empty input".into()),
+            Some(cmd) => Err(format!("unknown command: {}", cmd))?,
+            None => Err("empty input")?,
         }
     }
 }

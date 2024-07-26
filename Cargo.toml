@@ -3,6 +3,14 @@ name = "bureau"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "bureau-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "bureau-client"
+path = "src/bin/client.rs"
+
 [dependencies]
 anyhow = "1.0.86"
 bytes = "1.6.0"
