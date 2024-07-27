@@ -1,3 +1,4 @@
+use bureau::engine::{Command, Engine};
 use bytes::Bytes;
 use futures::SinkExt;
 use std::env;
@@ -6,9 +7,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
-
-use bureau::engine::{Command, Engine};
-use bureau::Result;
+use tracing::{error, info, warn};
+use tracing_subscriber;
 
 enum Request {
     Get { key: String },
@@ -22,14 +22,15 @@ enum Response {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> bureau::Result<(), Box<dyn Error>> {
+    tracing_subscriber::fmt::init();
     // TODO: Assemble config from env here.
     let addr = env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:12650".to_string());
 
     let listener = TcpListener::bind(&addr).await?;
-    println!("Listening on: {}", addr);
+    info!("Listening on: {}", addr);
 
     let (req_tx, req_rx) = mpsc::channel(64);
     // let (sst_tx, mut sst_rx) = mpsc::channel(req_chan_cap / 2);
@@ -54,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     let serialized = response.serialize();
 
                                     if let Err(e) = lines.send(serialized.as_str()).await {
-                                        println!("error on sending response; error = {:?}", e);
+                                        warn!("error on sending response; error = {:?}", e);
                                     }
                                 }
                                 Err(e) => {
@@ -64,18 +65,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     let serialized = response.serialize();
 
                                     if let Err(e) = lines.send(serialized.as_str()).await {
-                                        println!("error on sending response; error = {:?}", e);
+                                        warn!("error on sending response; error = {:?}", e);
                                     }
                                 }
                             },
                             Err(e) => {
-                                println!("error on decoding from socket; error = {:?}", e);
+                                error!("error on decoding from socket; error = {:?}", e);
                             }
                         }
                     }
                 });
             }
-            Err(e) => println!("error accepting socket; error = {:?}", e),
+            Err(e) => error!("error accepting socket; error = {:?}", e),
         }
     }
 }
@@ -136,7 +137,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
 }
 
 impl Request {
-    fn parse(input: &str) -> Result<Request> {
+    fn parse(input: &str) -> bureau::Result<Request> {
         let mut parts = input.splitn(3, ' ');
         match parts.next() {
             Some("GET") => {

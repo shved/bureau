@@ -1,10 +1,10 @@
 - [x] change dump Arc 'database' to LSM with channels
-- [ ] add server logs
+- [x] add simple server logs
 - [ ] write sstable after memtable is full
 - [ ] index to track sstables
 - [ ] forward 'get' to sstable index when no value in memtable
 - [ ] add shutdown to server
-- [ ] add tracing
+- [ ] better logging to handle threads and put logs to file
 - [ ] json response + schema
 - [ ] write sstable when memtable grows to limit
 - [ ] compaction of old memtables

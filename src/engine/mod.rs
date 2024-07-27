@@ -5,7 +5,7 @@ mod memtable;
 mod sstable;
 mod wal;
 
-use crate::{Responder, Result};
+use crate::Responder;
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
@@ -65,7 +65,7 @@ impl Engine {
         }
     }
 
-    fn insert(&mut self, key: Bytes, value: Bytes) -> Result<()> {
+    fn insert(&mut self, key: Bytes, value: Bytes) -> crate::Result<()> {
         match self.memtable.insert(key, value) {
             memtable::InsertResult::Full => {
                 self.swap_tables();
@@ -75,7 +75,7 @@ impl Engine {
         }
     }
 
-    async fn get(&self, key: Bytes) -> Result<Option<Bytes>> {
+    async fn get(&self, key: Bytes) -> crate::Result<Option<Bytes>> {
         if let Some(value) = self.get_from_mem(&key) {
             return Ok(Some(value));
         }
@@ -106,7 +106,7 @@ impl Engine {
         None
     }
 
-    async fn get_from_index(&self, key: Bytes) -> Result<Option<Bytes>> {
+    async fn get_from_index(&self, key: Bytes) -> crate::Result<Option<Bytes>> {
         // unimplemented!("TODO: Make it go to disk search sstables.");
         Ok(None)
     }
