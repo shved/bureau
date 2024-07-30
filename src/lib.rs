@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod sstable;
 
 use tokio::sync::oneshot;
 

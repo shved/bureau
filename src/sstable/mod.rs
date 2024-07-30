@@ -1,16 +1,21 @@
-use crate::engine::block::Block;
+pub mod block;
+mod builder;
+mod compaction;
+pub mod dispatcher;
+
+type Name = String;
 
 #[derive(Debug)]
 struct SSTable {
     // size: u8,
-    blocks: Vec<Block>,
+    blocks: Vec<block::Block>,
     footer_offset: u16,
     footer: TableMetadata,
 }
 
 #[derive(Debug)]
 struct TableMetadata {
-    name: String, // NOTE: timestamp_created+checksum.
+    name: Name, // NOTE: timestamp_created+checksum.
     index_offset: u16,
     index: Vec<BlockIndex>,
     checksum: Vec<u16>,

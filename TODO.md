@@ -3,15 +3,16 @@
 - [ ] write sstable after memtable is full
 - [ ] index to track sstables
 - [ ] forward 'get' to sstable index when no value in memtable
+- [ ] add key value validations length
 - [ ] add shutdown to server
 - [ ] better logging to handle threads and put logs to file
 - [ ] json response + schema
-- [ ] write sstable when memtable grows to limit
 - [ ] compaction of old memtables
 - [ ] make a statistics unit
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
-  - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram histogram)
-- [ ] cache and cache strategies
+  - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram)
+- [ ] cache and cache strategies (prob on the sst blooms level - make a pool of hot blooms)
+- [ ] add key-prefix optimization to sst (keys are ordered so we could save space on the same prefix of several keys)
 
 notes for case study:
 - first idea was to take AVL-tree for a memtable, but compared to std-lib BTreeMap performance should not be significantly better, so just stick with btreemap from the std

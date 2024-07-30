@@ -1,8 +1,5 @@
-mod block;
-mod compaction;
 mod index;
 mod memtable;
-mod sstable;
 mod wal;
 
 use crate::Responder;
@@ -51,7 +48,7 @@ impl Engine {
             match cmd {
                 Command::Get { key, responder } => {
                     let res = self.get(key).await;
-                    responder.send(res).unwrap();
+                    responder.send(res).ok();
                 }
                 Command::Set {
                     key,
@@ -59,7 +56,7 @@ impl Engine {
                     responder,
                 } => {
                     let res = self.insert(key, value);
-                    responder.send(res).unwrap();
+                    responder.send(res).ok();
                 }
             }
         }
@@ -71,7 +68,7 @@ impl Engine {
                 self.swap_tables();
                 Ok(())
             }
-            _ => Ok(()),
+            memtable::InsertResult::Available => Ok(()),
         }
     }
 

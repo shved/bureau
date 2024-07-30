@@ -95,7 +95,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
                 return Response::Error { msg: e.to_string() };
             }
 
-            let resp = resp_rx.await.unwrap();
+            let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
 
             match resp {
                 Ok(option) => match option {
@@ -123,7 +123,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
                 return Response::Error { msg: e.to_string() };
             }
 
-            let resp = resp_rx.await.unwrap();
+            let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
 
             match resp {
                 Ok(_) => Response::Set {
