@@ -3,7 +3,7 @@
 - [ ] write sstable after memtable is full
 - [ ] index to track sstables
 - [ ] forward 'get' to sstable index when no value in memtable
-- [ ] add key value validations length
+- [ ] add key value validations length (x > 0 && x < 256) and ascii
 - [ ] add shutdown to server
 - [ ] better logging to handle threads and put logs to file
 - [ ] json response + schema
@@ -21,3 +21,4 @@ notes for case study:
 - is index entry a file name?
 - paths to write to get from here: https://www.pathname.com/fhs/pub/fhs-2.3.html#THEVARHIERARCHY (/var)
 - how to protect shadow table for the moment sstable is not yet written to disk
+- blocks and table layout made that way that the first data is needed to the engine placed first. so that db only make small reads before reading the whole table.

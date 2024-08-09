@@ -2,45 +2,57 @@ use bytes::{Buf, BufMut, Bytes};
 
 /*
 Block layout schema.
-----------------------------------------------------------------------------------------------------
-|             Data Section             |              Offset Section             |      Extra      |
-----------------------------------------------------------------------------------------------------
-| Entry #1 | Entry #2 | ... | Entry #N | Offset #1 | Offset #2 | ... | Offset #N | num_of_elements |
-----------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+|                Offset Section                |             Data Section             |         Extra        |
+--------------------------------------------------------------------------------------------------------------
+| Num of offsets | Offset #1 | ... | Offset #N | Entry #1 | Entry #2 | ... | Entry #N | Block Checksum (u32) |
+--------------------------------------------------------------------------------------------------------------
 
 Single entry layout schema.
------------------------------------------------------------------------
-|                           Entry #1                            | ... |
------------------------------------------------------------------------
-| key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
------------------------------------------------------------------------
-
-Borrowed from https://skyzh.github.io/mini-lsm/week1-03-block.html.
+-----------------------------------------------------
+|                  Entry #1                   | ... |
+-----------------------------------------------------
+| key_len (2B) | key | value_len (2B) | value | ... |
+-----------------------------------------------------
 */
 
-/*
-Approximate size of block. We can't tell exactly what it will be because putting
-a bunch of key value pairs together to fit the exact limit is basically
-a knapsack problem (https://en.wikipedia.org/wiki/Knapsack_problem). Thats why
-we are good with approximate size here.
-*/
-const BLOCK_BYTESYZE: u16 = 4 * 1024; // 4KB.
+/// Approximate size of block. We can't tell exactly what it will be because putting
+/// a bunch of key value pairs together to fit the exact limit is basically
+/// a knapsack problem (https://en.wikipedia.org/wiki/Knapsack_problem). Thats why
+/// we are good with approximate size here.
+const BLOCK_BYTESYZE: u32 = 4 * 1024; // 4 KB.
 
-const U16_SIZE: usize = 2; // 2B key/value len hint.
+/// 2B key/value len hint.
+const U16_SIZE: u32 = std::mem::size_of::<u16>() as u32; // 2.
 
-// An overhead that a single k/v pair adds to the block.
-// Includes key len flag, value len flag, and a spot in the offsets section.
-const SINGLE_UNIT_OVERHEAD: usize = U16_SIZE * 3;
+const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
+
+/// The size of an empty block. Reserved for offsets count and checksum.
+const INITIAL_BLOCK_SIZE: u32 = U16_SIZE + CHECKSUM_SIZE as u32;
+
+/// An overhead that a single k/v pair adds to the block.
+/// Includes key len flag, value len flag, and a spot in the offsets section.
+const SINGLE_UNIT_OVERHEAD: u32 = U16_SIZE * 3;
+
+#[derive(Debug)]
+pub struct Entry {
+    key: Bytes,
+    value: Bytes,
+}
+
+impl Entry {
+    pub fn size(key: &Bytes, value: &Bytes) -> u32 {
+        key.len() as u32 + value.len() as u32 + SINGLE_UNIT_OVERHEAD
+    }
+}
 
 #[derive(Debug)]
 pub struct Block {
     data: Vec<u8>,
     offsets: Vec<u16>,
     first_key: Vec<u8>,
-}
-
-pub fn entry_size(key: &Bytes, value: &Bytes) -> usize {
-    &key.len() + &value.len() + SINGLE_UNIT_OVERHEAD
+    last_key: Vec<u8>,
+    size: u32,
 }
 
 impl Block {
@@ -49,23 +61,28 @@ impl Block {
             data: Vec::new(),
             offsets: Vec::new(),
             first_key: Vec::new(),
+            last_key: Vec::new(),
+            size: INITIAL_BLOCK_SIZE,
         }
     }
 
-    // Adds a key/value pair to block and returns true. If the block is full it does not add it
-    // and returns false.
+    /// Adds a key/value pair to block and returns true.
+    /// If the block is full it does not add it and returns false.
     pub fn add(&mut self, key: Bytes, value: Bytes) -> bool {
-        // assert!(!key.is_empty(), "key must not be empty");
+        let entry_size = Entry::size(&key, &value);
 
-        // TODO: Probably better to have a counter on block? Extract this to a block builder with extra state?
-        if self.calc_size() + entry_size(&key, &value) > BLOCK_BYTESYZE as usize && !self.is_empty()
-        {
+        if self.size + entry_size > BLOCK_BYTESYZE && !self.is_empty() {
             return false;
         }
+
+        self.size += entry_size;
 
         if self.first_key.is_empty() {
             self.first_key = key.to_vec();
         }
+
+        // Keep track of the last added key.
+        self.last_key = key.to_vec();
 
         // Add the offset of the data into the offset array.
         self.offsets.push(self.data.len() as u16);
@@ -82,45 +99,56 @@ impl Block {
         true
     }
 
+    /// Puts the contents of the block into a sequence of bytes.
+    /// Schema that is used can be found on top of the mod source code.
     pub fn encode(&self) -> Bytes {
         assert!(!self.is_empty());
-        let mut buf = self.data.clone();
-        let offsets_len = self.offsets.len();
+        let mut buf = Vec::new();
+
+        buf.put_u16(self.offsets.len() as u16);
         for offset in &self.offsets {
             buf.put_u16(*offset);
         }
-        // Put number of elements as a block footer.
-        buf.put_u16(offsets_len as u16);
+        buf.extend(&self.data);
+
+        let checksum = crc32fast::hash(&buf);
+        buf.put_u32(checksum);
+
         buf.into()
     }
 
-    pub fn decode(data: &[u8]) -> Self {
-        // Get number of elements in the block.
-        let entry_offsets_len = (&data[data.len() - U16_SIZE..]).get_u16() as usize;
-        let data_end = data.len() - U16_SIZE - entry_offsets_len * U16_SIZE;
-        let offsets_raw = &data[data_end..data.len() - U16_SIZE];
-        // Get offsets array.
-        let offsets = offsets_raw
-            .chunks(U16_SIZE)
-            .map(|mut x| x.get_u16())
-            .collect();
-        // Retrieve data.
-        let data = data[0..data_end].to_vec();
+    pub fn decode(mut raw: &[u8]) -> Self {
+        let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
+        let offsets_len = raw.get_u16();
+        let mut offsets = Vec::with_capacity(offsets_len as usize * 2);
+        for _ in 0..offsets_len {
+            offsets.push(raw.get_u16());
+        }
+
+        let mut data = Vec::new();
+        for _ in 0..raw.len() - CHECKSUM_SIZE {
+            data.push(raw.get_u8());
+        }
+
+        let checksum_decoded = raw.get_u32();
+
+        if checksum != checksum_decoded {
+            panic!("Checksum mismatch in block decode")
+        }
+
+        let size: u32 = INITIAL_BLOCK_SIZE + offsets_len as u32 * 2 + data.len() as u32;
+
         Self {
             data,
             offsets,
-            first_key: Vec::new(), // TODO: May be extract the first key here.
+            first_key: Vec::new(),
+            last_key: Vec::new(),
+            size,
         }
     }
 
-    fn calc_size(&self) -> usize {
-        self.data.len() // Data section size.
-            + self.offsets.len() * U16_SIZE // Offsets size.
-            + U16_SIZE // Number of elements.
-    }
-
     fn is_empty(&self) -> bool {
-        self.offsets.is_empty()
+        self.data.is_empty()
     }
 }
 
@@ -131,7 +159,7 @@ mod tests {
     #[test]
     fn entry_size() {
         assert_eq!(
-            super::entry_size(&Bytes::from("foo"), &Bytes::from("bar")),
+            super::Entry::size(&Bytes::from("foo"), &Bytes::from("bar")),
             12
         );
     }
