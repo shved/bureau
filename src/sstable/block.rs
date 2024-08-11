@@ -50,8 +50,8 @@ impl Entry {
 pub struct Block {
     data: Vec<u8>,
     offsets: Vec<u16>,
-    first_key: Vec<u8>,
-    last_key: Vec<u8>,
+    pub first_key: Bytes,
+    pub last_key: Bytes,
     size: u32,
 }
 
@@ -60,8 +60,8 @@ impl Block {
         Self {
             data: Vec::new(),
             offsets: Vec::new(),
-            first_key: Vec::new(),
-            last_key: Vec::new(),
+            first_key: Bytes::default(),
+            last_key: Bytes::default(),
             size: INITIAL_BLOCK_SIZE,
         }
     }
@@ -78,11 +78,11 @@ impl Block {
         self.size += entry_size;
 
         if self.first_key.is_empty() {
-            self.first_key = key.to_vec();
+            self.first_key = key.clone();
         }
 
         // Keep track of the last added key.
-        self.last_key = key.to_vec();
+        self.last_key = key.clone();
 
         // Add the offset of the data into the offset array.
         self.offsets.push(self.data.len() as u16);
@@ -141,8 +141,8 @@ impl Block {
         Self {
             data,
             offsets,
-            first_key: Vec::new(),
-            last_key: Vec::new(),
+            first_key: Bytes::default(),
+            last_key: Bytes::default(),
             size,
         }
     }

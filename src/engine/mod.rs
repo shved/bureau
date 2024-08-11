@@ -1,10 +1,15 @@
 mod index;
-mod memtable;
+pub mod memtable;
 mod wal;
 
 use crate::Responder;
 use bytes::Bytes;
+use std::fs::create_dir;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
+use uuid::Uuid;
+
+const DATA_PATH: &str = "/var/lib/bureau/";
 
 pub enum Command {
     Get {
@@ -43,6 +48,11 @@ impl Engine {
     }
 
     pub async fn run(mut self) {
+        let p = Path::new(DATA_PATH);
+        if !p.exists() {
+            create_dir(p).expect("Could not create data directory")
+        }
+
         // TODO: Change it to select! here to handle shutdown.
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
@@ -103,7 +113,7 @@ impl Engine {
         None
     }
 
-    async fn get_from_index(&self, key: Bytes) -> crate::Result<Option<Bytes>> {
+    async fn get_from_index(&self, _key: Bytes) -> crate::Result<Option<Bytes>> {
         // unimplemented!("TODO: Make it go to disk search sstables.");
         Ok(None)
     }
@@ -118,4 +128,8 @@ impl Engine {
 
         panic!("handle edge case somehow");
     }
+}
+
+pub fn sstable_path(id: &Uuid) -> PathBuf {
+    Path::new(DATA_PATH).join(id.to_string())
 }

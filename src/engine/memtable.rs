@@ -8,13 +8,13 @@ If memtable size reaches SSTABLE_BYTESYZE - RESERVE, we make an sstable
 right away because next key-value pair will most likely overflow the block size.
 TODO: adjust RESERVE value based on the statistics unit.
 */
-const RESERVE: usize = 64;
-const SSTABLE_BYTESIZE: usize = 64 * 1024; // 64KB (16 blocks).
+const RESERVE: u32 = 64;
+const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
 
 #[derive(Debug)]
 pub struct MemTable {
-    map: BTreeMap<Bytes, Bytes>,
-    size: usize,
+    pub map: BTreeMap<Bytes, Bytes>,
+    size: u32,
 }
 
 #[derive(Debug)]
@@ -31,8 +31,8 @@ impl MemTable {
         }
     }
 
-    pub fn from_wal(wal: Wal) -> MemTable {
-        unimplemented!("TODO");
+    pub fn from_wal(_wal: Wal) -> MemTable {
+        todo!();
     }
 
     // TODO: Introduce fn probe_size to check if key will overflow and preemptively
@@ -40,7 +40,7 @@ impl MemTable {
     pub fn insert(&mut self, key: Bytes, value: Bytes) -> InsertResult {
         self.update_size(&key, &value);
         self.map.insert(key, value);
-        if self.full() {
+        if self.is_full() {
             return InsertResult::Full;
         }
 
@@ -58,21 +58,21 @@ impl MemTable {
 
     fn update_size(&mut self, key: &Bytes, value: &Bytes) {
         // First, check if the key is already there.
-        let mut old_entry_size: usize = 0;
+        let mut old_entry_size: u32 = 0;
         if self.map.contains_key(key) {
             // It is fine to get value here since writes are syncronized via channel.
             let old_value = self.map.get(key).unwrap(); // unwrap() is fine here.
-            old_entry_size = block::entry_size(key, &old_value);
+            old_entry_size = block::Entry::size(key, &old_value);
         }
 
-        let entry_size = block::entry_size(key, value);
+        let entry_size = block::Entry::size(key, value);
 
         // This should never overflow unsigned since we only subtract the size of
         // whats already in there.
         self.size = self.size - old_entry_size + entry_size;
     }
 
-    fn full(&self) -> bool {
+    pub fn is_full(&self) -> bool {
         if self.size > (SSTABLE_BYTESIZE - RESERVE) {
             return true;
         }
@@ -86,7 +86,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full() {
+    fn is_full() {
         let mut mt = MemTable::new();
         mt.size = SSTABLE_BYTESIZE - RESERVE - 13;
         let old_size = mt.size;
@@ -94,11 +94,11 @@ mod tests {
         let res = mt.insert(Bytes::from("bar"), Bytes::from("foo"));
         assert!(matches!(res, InsertResult::Available { .. }));
 
-        assert!(!mt.full());
+        assert!(!mt.is_full());
 
         let res = mt.insert(Bytes::from("foo"), Bytes::from("bar"));
 
-        assert!(mt.full());
+        assert!(mt.is_full());
         assert_eq!(mt.size, old_size + 24);
         assert!(matches!(res, InsertResult::Full { .. }));
     }

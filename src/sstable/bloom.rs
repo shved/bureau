@@ -1,8 +1,10 @@
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
 
-const DEFAULT_MAX_ELEM: usize = 6500;
-const DEFAULT_PROBABILITY: f64 = 0.01;
+pub const MAX_ELEM: usize = 6400;
+pub const PROBABILITY: f64 = 0.01;
+const CHECKSUM_SIZE: usize = 4; // 4B.
+const BLOOM_SIZE: usize = 7713; // 7713B.
 
 pub trait BloomSerializable {
     fn encode(&self) -> Vec<u8>;
@@ -10,17 +12,16 @@ pub trait BloomSerializable {
 }
 
 /*
-Bloom filter layout schema. 7832 Bytes in size.
---------------------------------------------------------------------
-| Number of bits | K num |         Sip Keys         |    Bitmap    |
---------------------------------------------------------------------
-|      u64       |  u32  | [(u64, u64), (u64, u64)] | 101001010... |
---------------------------------------------------------------------
+Bloom filter layout schema.
+----------------------------------------------------------------------------------
+| Number of bits |  K num   |         Sip Keys         |    Bitmap    | Checksum |
+----------------------------------------------------------------------------------
+|      u64       | u32 (4B) | [(u64, u64), (u64, u64)] | 101001010... | u32 (4B) |
+----------------------------------------------------------------------------------
 */
 impl BloomSerializable for Bloom<Bytes> {
-    // TODO: Set capasity based on the size used.
     fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(BLOOM_SIZE + CHECKSUM_SIZE);
 
         // Bitmap bits parameter. Number of bits.
         buf.put_u64(self.number_of_bits());
@@ -38,26 +39,34 @@ impl BloomSerializable for Bloom<Bytes> {
         // Bitmap itself.
         buf.put(self.bitmap().as_ref());
 
+        let checksum = crc32fast::hash(&buf[..buf.capacity() - CHECKSUM_SIZE]);
+        buf.put_u32(checksum);
+
         buf
     }
 
-    fn decode(mut src: &[u8]) -> Self {
-        let bitmap_bits = src.get_u64();
-        let k_num = src.get_u32();
+    fn decode(mut raw: &[u8]) -> Self {
+        let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
+
+        let bitmap_bits = raw.get_u64();
+        let k_num = raw.get_u32();
         let sip_keys = [
-            (src.get_u64(), src.get_u64()),
-            (src.get_u64(), src.get_u64()),
+            (raw.get_u64(), raw.get_u64()),
+            (raw.get_u64(), raw.get_u64()),
         ];
-        let bytes_should_remain = bitmap_bits / 8 + (bitmap_bits % 8 != 0) as u64;
-        assert_eq!(src.remaining() as u64, bytes_should_remain);
-        let bitmap = src.copy_to_bytes(src.remaining());
-        assert!(!src.has_remaining());
+        let bitmap = raw.copy_to_bytes(raw.remaining() - CHECKSUM_SIZE);
+
+        let checksum_decoded = raw.get_u32();
+
+        if checksum != checksum_decoded {
+            panic!("Checksum mismatch in bloom filter decode")
+        }
+        assert!(!raw.has_remaining());
 
         Self::from_existing(bitmap.as_ref(), bitmap_bits, k_num, sip_keys)
     }
 }
 
-// TODO: Make it adjustable.
 fn new() -> Bloom<Bytes> {
-    Bloom::new_for_fp_rate(DEFAULT_MAX_ELEM, DEFAULT_PROBABILITY)
+    Bloom::new_for_fp_rate(MAX_ELEM, PROBABILITY)
 }
