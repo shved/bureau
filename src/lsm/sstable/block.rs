@@ -119,9 +119,9 @@ impl Block {
 
     pub fn decode(mut raw: &[u8]) -> Self {
         let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
-        let offsets_len = raw.get_u16();
-        let mut offsets = Vec::with_capacity(offsets_len as usize * 2);
-        for _ in 0..offsets_len {
+        let offsets_num = raw.get_u16();
+        let mut offsets = Vec::with_capacity(offsets_num as usize * 2);
+        for _ in 0..offsets_num {
             offsets.push(raw.get_u16());
         }
 
@@ -130,13 +130,11 @@ impl Block {
             data.push(raw.get_u8());
         }
 
-        let checksum_decoded = raw.get_u32();
-
-        if checksum != checksum_decoded {
+        if raw.get_u32() != checksum {
             panic!("Checksum mismatch in block decode")
         }
 
-        let size: u32 = INITIAL_BLOCK_SIZE + offsets_len as u32 * 2 + data.len() as u32;
+        let size: u32 = INITIAL_BLOCK_SIZE + offsets_num as u32 * 2 + data.len() as u32;
 
         Self {
             data,

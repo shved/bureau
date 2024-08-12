@@ -1,4 +1,4 @@
-use bureau::engine::{Command, Engine};
+use bureau::lsm::{Command, Engine};
 use bytes::Bytes;
 use futures::SinkExt;
 use std::env;

@@ -4,35 +4,37 @@ mod compaction;
 pub mod dispatcher;
 mod file_manager;
 
-use crate::engine::memtable::MemTable;
-use crate::engine::sstable_path;
-use crate::sstable::bloom::BloomSerializable;
+use super::memtable::MemTable;
+use super::sstable_path;
+use bloom::BloomSerializable;
 // use crate::sstable::file_manager::FileManager;
 use anyhow::{bail, Result};
 use block::Block;
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
-use uuid::Uuid;
 use std::fs;
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 /*
 SST layout schema.
-----------------------------------------------------------------------------------------------
-| Bloom Filter |             Block Index              |            Blocks Section            |
-----------------------------------------------------------------------------------------------
-|  7717 Bytes  | Entry #1 | Entry #2 | ... | Entry #N | Block #1 | Block #2 | ... | Block #N |
-----------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+| Bloom Filter |                           Table Index                           |       Blocks Section      |
+--------------------------------------------------------------------------------------------------------------
+|  7717 Bytes  | Num of entries (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
+--------------------------------------------------------------------------------------------------------------
 
-Block index entry layout.
+Table index entry layout.
 --------------------------------------------------------------------------
 |                              Entry #1                            | ... |
 --------------------------------------------------------------------------
-| key_len (2B) | first_key | key_len (2B) | last_key | Offset (2B) | ... |
+| key_len (2B) | first_key | key_len (2B) | last_key | Offset (4B) | ... |
 --------------------------------------------------------------------------
 
 Individual block layout is given where Block is defined.
 */
 
+const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 
 #[derive(Debug)]
 pub struct SsTable {
@@ -73,13 +75,17 @@ impl SsTable {
         let mut blocks_encoded = Vec::<u8>::new();
         let mut index = TableIndex::new();
         for block in self.blocks.as_slice() {
-            index.0.push(IndexEntry::new(offset, block.first_key.clone(), block.last_key.clone()));
+            index.0.push(IndexEntry::new(
+                offset,
+                block.first_key.clone(),
+                block.last_key.clone(),
+            ));
 
             let block_encoded = block.encode();
             offset += block_encoded.len() as u32;
             blocks_encoded.extend(block_encoded);
         }
-        
+
         let mut content = self.bloom.encode();
         content.extend(index.encode());
         content.extend(blocks_encoded);
@@ -94,7 +100,7 @@ impl SsTable {
 
         Ok(self.id)
     }
-   
+
     /// Generates a simple and time ordered uuid (v7).
     fn generate_id() -> Uuid {
         Uuid::now_v7()
@@ -191,7 +197,7 @@ impl SsTable {
 }
 
 #[derive(Debug)]
-struct IndexEntry{
+struct IndexEntry {
     /// Offset of a data block.
     pub offset: u32,
     pub first_key: Bytes,
@@ -200,13 +206,16 @@ struct IndexEntry{
 
 impl IndexEntry {
     fn new(offset: u32, first_key: Bytes, last_key: Bytes) -> Self {
-        IndexEntry { offset, first_key, last_key }
+        IndexEntry {
+            offset,
+            first_key,
+            last_key,
+        }
     }
 }
 
 #[derive(Debug)]
-struct TableIndex(Vec<IndexEntry>)
-
+struct TableIndex(Vec<IndexEntry>);
 
 impl TableIndex {
     fn new() -> Self {
@@ -214,49 +223,39 @@ impl TableIndex {
     }
 
     fn encode(&self) -> Vec<u8> {
-        let mut size = std::mem::size_of::<u32>(); // ???
-        for block in block_index {
-            // The size of offset
-            size += std::mem::size_of::<u32>();
-            // The size of key length
-            size += std::mem::size_of::<u16>();
-            // The size of actual key
-            size += block.first_key.len();
-            // The size of key length
-            size += std::mem::size_of::<u16>();
-            // The size of actual key
-            size += block.last_key.len();
+        let mut buf = Vec::new();
+
+        let entries_num = self.0.len();
+        if entries_num == 0 {
+            panic!("Attempt to endcode an empty table index")
         }
-        size += std::mem::size_of::<u32>();
+        buf.put_u16(entries_num as u16);
 
-        // Reserve the space to improve performance, especially when the size of incoming data is large.
-        buf.reserve(size); // ???
-
-        let original_len = buf.len();
-        buf.put_u32(block_index.len() as u32);
-        for meta in block_index {
-            buf.put_u32(meta.offset as u32);
-            buf.put_u16(meta.first_key.len() as u16);
-            buf.put_slice(meta.first_key.as_ref());
-            buf.put_u16(meta.last_key.len() as u16);
-            buf.put_slice(meta.last_key.as_ref());
+        for entry in self.0.as_slice() {
+            buf.put_u16(entry.first_key.len() as u16);
+            buf.put_slice(entry.first_key.as_ref());
+            buf.put_u16(entry.last_key.len() as u16);
+            buf.put_slice(entry.last_key.as_ref());
+            buf.put_u32(entry.offset);
         }
 
-        buf.put_u32(crc32fast::hash(&buf[original_len + 4..]));
-        assert_eq!(size, buf.len() - original_len);
+        let checksum = crc32fast::hash(&buf[..]);
+        buf.put_u32(checksum);
+
+        buf
     }
 
-    fn decode(mut raw: &[u8]) -> Result<Vec<Self>> {
-        let mut block_index = Vec::new();
-        let num = raw.get_u32() as usize;
-        let checksum = crc32fast::hash(&raw[..raw.remaining() - 4]);
-        for _ in 0..num {
-            let offset = raw.get_u32() as usize;
+    fn decode(mut raw: &[u8]) -> Self {
+        let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
+        let mut table_index = TableIndex::new();
+        let entries_num = raw.get_u32() as usize;
+        for _ in 0..entries_num {
             let first_key_len = raw.get_u16() as usize;
             let first_key = raw.copy_to_bytes(first_key_len);
             let last_key_len: usize = raw.get_u16() as usize;
             let last_key = raw.copy_to_bytes(last_key_len);
-            block_index.push(Self {
+            let offset = raw.get_u32();
+            table_index.0.push(IndexEntry {
                 offset,
                 first_key,
                 last_key,
@@ -264,9 +263,9 @@ impl TableIndex {
         }
 
         if raw.get_u32() != checksum {
-            bail!("meta checksum mismatched");
+            panic!("Checksum mismatch in table index decode");
         }
 
-        Ok(block_index)
+        table_index
     }
 }

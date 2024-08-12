@@ -1,5 +1,5 @@
-use crate::engine::wal::Wal;
-use crate::sstable::block;
+use crate::lsm::sstable::block;
+use crate::lsm::wal::Wal;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 

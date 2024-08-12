@@ -1,6 +1,5 @@
 // TODO: DO I EVEN NEED IT
 use std::fs::File;
-use std::io::Write;
 // use std::io::prelude::*;
 // use std::io::SeekFrom;
 use crate::Result;

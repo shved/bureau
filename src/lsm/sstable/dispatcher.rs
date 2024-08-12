@@ -1,26 +1,25 @@
-use super::builder::Builder;
-use super::Name;
 use crate::Responder;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 use tokio::sync::oneshot;
+use uuid::Uuid;
 
 enum DispatchResult {
     // Two SSTables to be replaced by a new one already present on disk.
-    Replace((Name, Name), Name),
-    New(Name),
+    Replace((Uuid, Uuid), Uuid),
+    New(Uuid),
 }
 
 struct SSTDispatcher {
     // TODO: BtreeMap not the best type to send here.
     new_table_data_rx: oneshot::Receiver<BTreeMap<Bytes, Bytes>>,
-    new_table_id_tx: Responder<Name>,
+    new_table_id_tx: Responder<Uuid>,
 }
 
 impl SSTDispatcher {
     pub fn new(
         new_table_data_rx: oneshot::Receiver<BTreeMap<Bytes, Bytes>>,
-        new_table_id_tx: Responder<Name>,
+        new_table_id_tx: Responder<Uuid>,
     ) -> SSTDispatcher {
         SSTDispatcher {
             new_table_data_rx,
@@ -29,8 +28,6 @@ impl SSTDispatcher {
     }
 
     pub async fn run(mut self) {
-        while let Ok(map) = self.new_table_data_rx.await {
-            let builder = Builder::new(&map);
-        }
+        while let Ok(map) = self.new_table_data_rx.await {}
     }
 }

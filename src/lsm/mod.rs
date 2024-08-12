@@ -1,5 +1,7 @@
+mod cache;
 mod index;
 pub mod memtable;
+mod sstable;
 mod wal;
 
 use crate::Responder;
