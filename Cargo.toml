@@ -11,6 +11,10 @@ path = "src/bin/server.rs"
 name = "bureau-client"
 path = "src/bin/client.rs"
 
+[[bench]]
+name = "search_in_block"
+harness = false
+
 [dependencies]
 anyhow = "1.0.86"
 bloomfilter = "1.0.14"
@@ -24,3 +28,7 @@ tokio-util = { version = "0.7.11", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
 uuid = { version = "1.10.0", features = ["v7"] }
+
+[dev-dependencies]
+criterion = "0.5.1"
+random-string = "1.1.0"

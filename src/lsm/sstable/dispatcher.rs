@@ -28,6 +28,6 @@ impl SSTDispatcher {
     }
 
     pub async fn run(mut self) {
-        while let Ok(map) = self.new_table_data_rx.await {}
+        // while let Ok(_map) = self.new_table_data_rx.await {}
     }
 }

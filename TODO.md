@@ -22,3 +22,4 @@ notes for case study:
 - paths to write to get from here: https://www.pathname.com/fhs/pub/fhs-2.3.html#THEVARHIERARCHY (/var)
 - how to protect shadow table for the moment sstable is not yet written to disk
 - blocks and table layout made that way that the first data is needed to the engine placed first. so that db only make small reads before reading the whole table.
+- binary search for seeking a value in a block data seem to be intuitive, but the data size is relatively small so I've made a bench to choose the strategy. Turns out even though there are less then 100 elems in the block, binary search still beats simple iteration by far.

@@ -2,27 +2,25 @@ pub mod block;
 mod bloom;
 mod compaction;
 pub mod dispatcher;
-mod file_manager;
 
 use super::memtable::MemTable;
 use super::sstable_path;
-use bloom::BloomSerializable;
-// use crate::sstable::file_manager::FileManager;
-use anyhow::{bail, Result};
+use crate::Result;
 use block::Block;
+use bloom::BloomSerializable;
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::FileExt;
 use uuid::Uuid;
 
 /*
-SST layout schema.
---------------------------------------------------------------------------------------------------------------
-| Bloom Filter |                           Table Index                           |       Blocks Section      |
---------------------------------------------------------------------------------------------------------------
-|  7717 Bytes  | Num of entries (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
---------------------------------------------------------------------------------------------------------------
+SST layout schema. First section is to be read first to make the initial checks of the table.
+-------------------------------------------------------------------------------------------------------------------------
+| Bloom filter and Index len |                         Table Index                          |       Blocks Section      |
+----------------------------------------------------------------------------------------------------------
+|       7717 Bytes + 2B      | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
+-------------------------------------------------------------------------------------------------------------------------
 
 Table index entry layout.
 --------------------------------------------------------------------------
@@ -36,6 +34,8 @@ Individual block layout is given where Block is defined.
 
 const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 
+/// Sstable is meant to be used the following way. Typical lifecicle of an instance
+/// can be described as a set of calls: build -> encode -> persist and then many lookups.
 #[derive(Debug)]
 pub struct SsTable {
     blocks: Vec<Block>,
@@ -45,22 +45,23 @@ pub struct SsTable {
 
 impl SsTable {
     pub fn build(src: MemTable) -> Self {
-        if !src.is_full() {
-            panic!("Flushing a memtable that is not full yet")
-        }
+        assert!(!src.is_full(), "Flushing a memtable that is not full yet");
 
         let mut blocks = Vec::new();
         let mut bloom = Bloom::new_for_fp_rate(bloom::MAX_ELEM, bloom::PROBABILITY);
         let mut cur_block = Block::new();
-        let mut available: bool;
 
         for (k, v) in src.map {
-            available = cur_block.add(k.clone(), v);
-            if !available {
-                blocks.push(cur_block);
-                bloom.set(&k);
-                cur_block = Block::new();
+            match cur_block.add(k.clone(), v.clone()) {
+                false => {
+                    blocks.push(cur_block); // Block is full. Put it to the blocks vector.
+                    cur_block = Block::new(); // Set the cursor to be a new block.
+                    cur_block.add(k.clone(), v); // Put the value to a new block.
+                }
+                _ => (),
             }
+
+            bloom.set(&k);
         }
 
         Self {
@@ -106,94 +107,60 @@ impl SsTable {
         Uuid::now_v7()
     }
 
-    // pub fn open(id: usize, file: FileManager) -> Result<Self> {
-    //     let len = file.size;
-    //     let raw_bloom_offset = file.read(len - 4, 4)?; // TODO: Whats the real offset?
-    //     let bloom_offset = (&raw_bloom_offset[..]).get_u32() as u64;
-    //     let raw_bloom = file.read(bloom_offset, len - 4 - bloom_offset)?;
-    //     let bloom_filter = Bloom::decode(&raw_bloom)?; // TODO HERE
-    //     let raw_meta_offset = file.read(bloom_offset - 4, 4)?;
-    //     let block_meta_offset = (&raw_meta_offset[..]).get_u32() as u64;
-    //     let raw_meta = file.read(block_meta_offset, bloom_offset - 4 - block_meta_offset)?;
-    //     let block_meta = BlockMeta::decode_block_meta(&raw_meta[..])?;
-    //     Ok(Self {
-    //         file,
-    //         first_key: block_meta.first().unwrap().first_key.clone(),
-    //         last_key: block_meta.last().unwrap().last_key.clone(),
-    //         block_meta,
-    //         block_meta_offset: block_meta_offset as usize,
-    //         id,
-    //         block_cache,
-    //         bloom: Some(bloom_filter),
-    //         max_ts: 0,
-    //     })
-    // }
+    pub fn lookup(table_id: &Uuid, key: &Bytes) -> Result<Option<Bytes>> {
+        let f = fs::File::options()
+            .read(true)
+            .write(false)
+            .open(sstable_path(table_id))?;
 
-    // /// Create a mock SST with only first key + last key metadata
-    // pub fn create_meta_only(id: usize, file_size: u64, first_key: Bytes, last_key: Bytes) -> Self {
-    //     Self {
-    //         file: FileReader(None, file_size),
-    //         block_meta: vec![],
-    //         block_meta_offset: 0,
-    //         id,
-    //         block_cache: None,
-    //         first_key,
-    //         last_key,
-    //         bloom: None,
-    //         max_ts: 0,
-    //     }
-    // }
+        match Self::probe_bloom(&f, &key)? {
+            (true, index_len) => {
+                if let Some(offset) = Self::lookup_index(&f, index_len as usize, &key)? {
+                    let _block = Self::read_block(&f, offset)?;
+                    // return Ok(block::get(&key));
+                }
+            }
+            _ => (),
+        }
 
-    // pub fn read_block(&self, block_idx: usize) -> Result<Block> {
-    //     let offset = self.block_meta[block_idx].offset;
-    //     let offset_end = self
-    //         .block_meta
-    //         .get(block_idx + 1)
-    //         .map_or(self.block_meta_offset, |x| x.offset);
-    //     let block_len = offset_end - offset - 4;
-    //     let block_data_with_chksum: Vec<u8> = self
-    //         .file
-    //         .read(offset as u64, (offset_end - offset) as u64)?;
-    //     let block_data = &block_data_with_chksum[..block_len];
-    //     let checksum = (&block_data_with_chksum[block_len..]).get_u32();
-    //     if checksum != crc32fast::hash(block_data) {
-    //         bail!("block checksum mismatched");
-    //     }
+        Ok(None)
+    }
 
-    //     Ok(Block::decode(block_data))
-    // }
+    /// Reads the bloom filter and a couple extra bytes from the table index
+    /// to know the table index len for the next call if it will be necessary.
+    fn probe_bloom(file: &fs::File, key: &Bytes) -> Result<(bool, u16)> {
+        let mut data = vec![0; first_section_len()];
+        file.read_exact_at(&mut data, 0)?;
 
-    // /// Find the block that may contain `key`.
-    // pub fn find_block_idx(&self, key: KeySlice) -> usize {
-    //     self.block_meta
-    //         .partition_point(|meta| meta.first_key.as_key_slice() <= key)
-    //         .saturating_sub(1)
-    // }
+        let mut index_len_bytes: [u8; 2] = [0, 0];
+        index_len_bytes.copy_from_slice(&mut data[bloom_section_len()..]);
+        let index_len = u16::from_be_bytes(index_len_bytes);
+        let b = Bloom::decode(&data[..std::mem::size_of::<u16>()]);
 
-    // /// Get number of data blocks.
-    // pub fn num_of_blocks(&self) -> usize {
-    //     self.block_meta.len()
-    // }
+        Ok((b.check(&key), index_len))
+    }
 
-    // pub fn first_key(&self) -> &KeyBytes {
-    //     &self.first_key
-    // }
+    fn lookup_index(file: &fs::File, len: usize, key: &Bytes) -> Result<Option<u32>> {
+        let mut data = vec![0; len];
+        file.read_exact_at(&mut data, first_section_len() as u64)?;
 
-    // pub fn last_key(&self) -> &KeyBytes {
-    //     &self.last_key
-    // }
+        let index = TableIndex::decode(&data);
+        let entry = index
+            .0
+            .into_iter()
+            .find(|e| e.first_key < key && e.last_key > key);
+        match entry {
+            Some(IndexEntry { offset, .. }) => Ok(Some(offset)),
+            None => Ok(None),
+        }
+    }
 
-    // pub fn table_size(&self) -> u64 {
-    //     self.file.1
-    // }
+    fn read_block(file: &fs::File, offset: u32) -> Result<Block> {
+        let mut data = vec![0; block::BLOCK_BYTESIZE];
+        file.read_exact_at(&mut data, offset as u64)?;
 
-    // pub fn sst_id(&self) -> usize {
-    //     self.id
-    // }
-
-    // pub fn max_ts(&self) -> u64 {
-    //     self.max_ts
-    // }
+        Ok(Block::decode(&data))
+    }
 }
 
 #[derive(Debug)]
@@ -225,10 +192,11 @@ impl TableIndex {
     fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
 
+        buf.put_u16(0); // Reserve it for the whole index bytelen added at the end of encoding.
+
         let entries_num = self.0.len();
-        if entries_num == 0 {
-            panic!("Attempt to endcode an empty table index")
-        }
+        assert!(entries_num == 0, "Attempt to endcode an empty table index");
+
         buf.put_u16(entries_num as u16);
 
         for entry in self.0.as_slice() {
@@ -242,9 +210,16 @@ impl TableIndex {
         let checksum = crc32fast::hash(&buf[..]);
         buf.put_u32(checksum);
 
+        let index_len: [u8; 2] = (buf.len() as u16).to_be_bytes();
+        buf[0] = index_len[0];
+        buf[1] = index_len[1];
+
         buf
     }
 
+    /// u16 reserved for byte len of a table index sector in the process of encoding
+    /// should not be included in the slice passed. Only valuable data is expected here.
+    /// Index bytelen will be read separately along with the bloom filter.
     fn decode(mut raw: &[u8]) -> Self {
         let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
         let mut table_index = TableIndex::new();
@@ -262,10 +237,22 @@ impl TableIndex {
             });
         }
 
-        if raw.get_u32() != checksum {
-            panic!("Checksum mismatch in table index decode");
-        }
+        assert!(
+            raw.get_u32() != checksum,
+            "Checksum mismatch in table index decode"
+        );
 
         table_index
     }
+}
+
+/// Byte size of the bloom filter section with the checksum.
+fn bloom_section_len() -> usize {
+    bloom::BLOOM_SIZE + bloom::CHECKSUM_SIZE
+}
+
+/// Byte size of the first section to read in the table. It is a sum of
+/// bloom filter data, a bloom filter checksum and table index byte len.
+fn first_section_len() -> usize {
+    bloom_section_len() + std::mem::size_of::<u16>()
 }

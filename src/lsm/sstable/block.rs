@@ -16,11 +16,8 @@ Single entry layout schema.
 -----------------------------------------------------
 */
 
-/// Approximate size of block. We can't tell exactly what it will be because putting
-/// a bunch of key value pairs together to fit the exact limit is basically
-/// a knapsack problem (https://en.wikipedia.org/wiki/Knapsack_problem). Thats why
-/// we are good with approximate size here.
-const BLOCK_BYTESYZE: u32 = 4 * 1024; // 4 KB.
+/// A block will be always exactly this size for the sake of easy time reading it from disk.
+pub const BLOCK_BYTESIZE: usize = 4 * 1024; // 4 KB.
 
 /// 2B key/value len hint.
 const U16_SIZE: u32 = std::mem::size_of::<u16>() as u32; // 2.
@@ -33,18 +30,6 @@ const INITIAL_BLOCK_SIZE: u32 = U16_SIZE + CHECKSUM_SIZE as u32;
 /// An overhead that a single k/v pair adds to the block.
 /// Includes key len flag, value len flag, and a spot in the offsets section.
 const SINGLE_UNIT_OVERHEAD: u32 = U16_SIZE * 3;
-
-#[derive(Debug)]
-pub struct Entry {
-    key: Bytes,
-    value: Bytes,
-}
-
-impl Entry {
-    pub fn size(key: &Bytes, value: &Bytes) -> u32 {
-        key.len() as u32 + value.len() as u32 + SINGLE_UNIT_OVERHEAD
-    }
-}
 
 #[derive(Debug)]
 pub struct Block {
@@ -71,7 +56,7 @@ impl Block {
     pub fn add(&mut self, key: Bytes, value: Bytes) -> bool {
         let entry_size = Entry::size(&key, &value);
 
-        if self.size + entry_size > BLOCK_BYTESYZE && !self.is_empty() {
+        if self.size + entry_size > BLOCK_BYTESIZE as u32 && !self.is_empty() {
             return false;
         }
 
@@ -102,8 +87,8 @@ impl Block {
     /// Puts the contents of the block into a sequence of bytes.
     /// Schema that is used can be found on top of the mod source code.
     pub fn encode(&self) -> Bytes {
-        assert!(!self.is_empty());
-        let mut buf = Vec::new();
+        assert!(!self.is_empty(), "Attempt to encode an empty block");
+        let mut buf = Vec::with_capacity(BLOCK_BYTESIZE);
 
         buf.put_u16(self.offsets.len() as u16);
         for offset in &self.offsets {
@@ -111,13 +96,28 @@ impl Block {
         }
         buf.extend(&self.data);
 
+        // Fill the vector up to its capacity (leaving the space required for checksum).
+        if buf.len() != buf.capacity() - CHECKSUM_SIZE {
+            buf.extend((buf.len()..buf.capacity() - CHECKSUM_SIZE).map(|_| 0));
+        }
+
         let checksum = crc32fast::hash(&buf);
         buf.put_u32(checksum);
+
+        assert!(
+            buf.len() == BLOCK_BYTESIZE,
+            "Block encoded exceeds the block bytesize"
+        );
 
         buf.into()
     }
 
     pub fn decode(mut raw: &[u8]) -> Self {
+        assert!(
+            raw.len() == BLOCK_BYTESIZE,
+            "Byte slice to decode a block exceeds the block size"
+        );
+
         let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
         let offsets_num = raw.get_u16();
         let mut offsets = Vec::with_capacity(offsets_num as usize * 2);
@@ -125,29 +125,64 @@ impl Block {
             offsets.push(raw.get_u16());
         }
 
-        let mut data = Vec::new();
-        for _ in 0..raw.len() - CHECKSUM_SIZE {
-            data.push(raw.get_u8());
-        }
+        let mut data = Vec::with_capacity(raw.len() - CHECKSUM_SIZE);
+        data.put(raw[..].take(raw.len() - CHECKSUM_SIZE));
 
-        if raw.get_u32() != checksum {
-            panic!("Checksum mismatch in block decode")
-        }
-
-        let size: u32 = INITIAL_BLOCK_SIZE + offsets_num as u32 * 2 + data.len() as u32;
+        assert!(
+            raw.get_u32() != checksum,
+            "Checksum mismatch in block decode"
+        );
 
         Self {
             data,
             offsets,
             first_key: Bytes::default(),
             last_key: Bytes::default(),
-            size,
+            size: 0, // The field should not be used on decoded block.
         }
     }
 
     fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+}
+
+#[derive(Debug)]
+pub struct Entry {
+    key: Bytes,
+    value: Bytes,
+}
+
+impl Entry {
+    pub fn size(key: &Bytes, value: &Bytes) -> u32 {
+        key.len() as u32 + value.len() as u32 + SINGLE_UNIT_OVERHEAD
+    }
+
+    fn default() -> Self {
+        Self {
+            key: Bytes::default(),
+            value: Bytes::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Iterator {
+    block: Block,
+    cur_entry: Entry,
+    idx: usize,
+}
+
+impl Iterator {
+    fn new(block: Block) -> Self {
+        Self {
+            block,
+            cur_entry: Entry::default(),
+            idx: 0,
+        }
+    }
+
+    fn find_entry() {}
 }
 
 #[cfg(test)]

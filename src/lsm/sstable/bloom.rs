@@ -3,8 +3,8 @@ use bytes::{Buf, BufMut, Bytes};
 
 pub const MAX_ELEM: usize = 6400;
 pub const PROBABILITY: f64 = 0.01;
-const CHECKSUM_SIZE: usize = 4; // 4B.
-const BLOOM_SIZE: usize = 7713; // 7713B.
+pub const CHECKSUM_SIZE: usize = 4; // 4B.
+pub const BLOOM_SIZE: usize = 7713; // 7713B.
 
 pub trait BloomSerializable {
     fn encode(&self) -> Vec<u8>;

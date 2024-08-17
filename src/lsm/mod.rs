@@ -132,6 +132,6 @@ impl Engine {
     }
 }
 
-pub fn sstable_path(id: &Uuid) -> PathBuf {
-    Path::new(DATA_PATH).join(id.to_string())
+pub fn sstable_path(table_id: &Uuid) -> PathBuf {
+    Path::new(DATA_PATH).join(table_id.to_string())
 }
