@@ -14,7 +14,7 @@ fn sequential_search(offsets: &[u16], data: &[u8], key: Bytes) -> Option<Bytes> 
     for offset in offsets {
         let get_key = parse_frame(data, *offset as usize);
         if get_key == key {
-            return Some(parse_frame(data, *offset as usize + 2 + key.len()));
+            return Some(key);
         }
     }
 
@@ -34,7 +34,7 @@ fn binary_search(offsets: &[u16], data: &[u8], key: Bytes) -> Option<Bytes> {
             std::cmp::Ordering::Less => low = mid + 1,
             std::cmp::Ordering::Greater => high = mid - 1,
             std::cmp::Ordering::Equal => {
-                return Some(parse_frame(&data, offsets[mid] as usize + 2 + key.len()))
+                return Some(key)
             }
         }
     }
@@ -42,11 +42,9 @@ fn binary_search(offsets: &[u16], data: &[u8], key: Bytes) -> Option<Bytes> {
     None
 }
 
-fn parse_frame(data: &[u8], offset: usize) -> Bytes {
-    let mut len_bytes: [u8; 2] = [0, 0];
-    len_bytes.copy_from_slice(&data[offset..offset + 2]);
-    let len = u16::from_be_bytes(len_bytes) as usize;
-    Bytes::copy_from_slice(&data[offset + 2..offset + 2 + len])
+fn parse_frame(data: &[u8], offset: usize) -> &[u8] {
+    let key_len: usize = (data[offset] as usize) << 8 | (data[offset + 1] as usize);
+    &data[offset + 2 .. offset + 2 + key_len]
 }
 
 #[derive(Debug, Clone)]
