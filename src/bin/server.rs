@@ -32,9 +32,8 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&addr).await?;
     info!("Listening on: {}", addr);
 
+    // TODO: I dont like it that server is in charge of choosing the buffer size for channels here.
     let (req_tx, req_rx) = mpsc::channel(64);
-    // let (sst_tx, mut sst_rx) = mpsc::channel(req_chan_cap / 2);
-    // let engine = Engine::new(req_rx, sst_rx);
     let engine = Engine::new(req_rx);
 
     tokio::spawn(engine.run());

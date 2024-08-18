@@ -15,12 +15,3 @@
 - [ ] cache and cache strategies (prob on the sst blooms level - make a pool of hot blooms)
 - [ ] add key-prefix optimization to sst (keys are ordered so we could save space on the same prefix of several keys)
 
-notes for case study:
-- first idea was to take AVL-tree for a memtable, but compared to std-lib BTreeMap performance should not be significantly better, so just stick with btreemap from the std
-- shadow table is a concept to release the lock immediately while sstable is being compacted and written to disk.
-- cache, memtable and shadow mem are always the same position. these are not present in index. index is only for sstables.
-- is index entry a file name?
-- paths to write to get from here: https://www.pathname.com/fhs/pub/fhs-2.3.html#THEVARHIERARCHY (/var)
-- how to protect shadow table for the moment sstable is not yet written to disk
-- blocks and table layout made that way that the first data is needed to the engine placed first. so that db only make small reads before reading the whole table.
-- binary search for seeking a value in a block data seem to be intuitive, but the data size is relatively small so I've made a bench to choose the strategy. Turns out even though there are less then 100 elems in the block, binary search still beats simple iteration by far.

@@ -1,9 +1,10 @@
 mod cache;
-mod index;
+mod dispatcher;
 pub mod memtable;
 mod sstable;
 mod wal;
 
+use crate::lsm::dispatcher::Dispatcher;
 use crate::Responder;
 use bytes::Bytes;
 use std::fs::create_dir;
@@ -32,7 +33,6 @@ pub struct Engine {
     // shutdown_rx: mpsc::Receiver<Command>,
     memtable: memtable::MemTable,
     shadow_table: memtable::MemTable,
-    index: index::Index,
     wal: wal::Wal,
     shadow_table_written: bool, // TODO: May be move it to table level somehow.
 }
@@ -44,7 +44,6 @@ impl Engine {
             memtable: memtable::MemTable::new(),
             shadow_table: memtable::MemTable::new(),
             shadow_table_written: true,
-            index: index::Index::new(),
             wal: wal::Wal {},
         }
     }

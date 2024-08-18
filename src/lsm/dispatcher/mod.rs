@@ -1,16 +1,14 @@
+mod compaction;
+mod index;
+
 use crate::Responder;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-enum DispatchResult {
-    // Two SSTables to be replaced by a new one already present on disk.
-    Replace((Uuid, Uuid), Uuid),
-    New(Uuid),
-}
-
-struct SSTDispatcher {
+#[derive(Debug)]
+pub struct Dispatcher {
     // TODO: BtreeMap not the best type to send here.
     new_table_data_rx: oneshot::Receiver<BTreeMap<Bytes, Bytes>>,
     new_table_id_tx: Responder<Uuid>,
