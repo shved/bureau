@@ -142,6 +142,34 @@ impl Block {
         }
     }
 
+    pub fn get(&self, key: Bytes) -> Option<Bytes> {
+        let mut low = 0;
+        let mut high = self.offsets.len() - 1;
+
+        while low <= high {
+            let mid = low + (high - low) / 2;
+
+            let read_key = self.parse_frame(self.offsets[mid] as usize);
+
+            match read_key.cmp(&key) {
+                std::cmp::Ordering::Less => low = mid + 1,
+                std::cmp::Ordering::Greater => high = mid - 1,
+                std::cmp::Ordering::Equal => {
+                    return Some(self.parse_frame(self.offsets[mid] as usize + 2 + key.len()))
+                }
+            }
+        }
+
+        None
+    }
+
+    fn parse_frame(&self, offset: usize) -> Bytes {
+        let mut len_bytes: [u8; 2] = [0, 0];
+        len_bytes.copy_from_slice(&self.data[offset..offset + 2]);
+        let len = u16::from_be_bytes(len_bytes) as usize;
+        Bytes::copy_from_slice(&self.data[offset + 2..offset + 2 + len])
+    }
+
     fn is_empty(&self) -> bool {
         self.data.is_empty()
     }

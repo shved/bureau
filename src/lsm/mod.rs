@@ -89,15 +89,15 @@ impl Engine {
             return Ok(Some(value));
         }
 
-        Ok(None)
-
-        // match self.get_from_index(key).await {
+        // match self.get_from_disk(key).await {
         //     Ok(res) => match res {
         //         Some(value) => Ok(Some(value)),
         //         None => Ok(None),
         //     },
         //     Err(e) => Err(e),
         // }
+
+        Ok(None)
     }
 
     // It only checks hot spots: cache, memtable, shadow table.
@@ -115,8 +115,7 @@ impl Engine {
         None
     }
 
-    async fn get_from_index(&self, _key: Bytes) -> crate::Result<Option<Bytes>> {
-        // unimplemented!("TODO: Make it go to disk search sstables.");
+    async fn get_from_disk(&self, _key: Bytes) -> crate::Result<Option<Bytes>> {
         Ok(None)
     }
 

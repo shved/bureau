@@ -42,20 +42,6 @@ fn binary_search(offsets: &[u16], data: &[u8], key: Bytes) -> Option<Bytes> {
     None
 }
 
-// fn mixed_search(offsets: &[u16], data: &[u8], key: Bytes) -> Option<Bytes> {
-//     let high = offsets.len() - 1;
-//     let mid = high / 2;
-
-//     let read_key = parse_frame(&data, offsets[mid] as usize);
-//     match read_key.cmp(&key) {
-//         std::cmp::Ordering::Less => return sequential_search(&offsets[mid..], &data, key),
-//         std::cmp::Ordering::Greater => return sequential_search(&offsets[..mid], &data, key),
-//         std::cmp::Ordering::Equal => {
-//             return Some(parse_frame(&data, offsets[mid] as usize + 2 + key.len()))
-//         }
-//     }
-// }
-
 fn parse_frame(data: &[u8], offset: usize) -> Bytes {
     let mut len_bytes: [u8; 2] = [0, 0];
     len_bytes.copy_from_slice(&data[offset..offset + 2]);

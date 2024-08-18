@@ -5,6 +5,7 @@
 - [ ] forward 'get' to sstable index when no value in memtable
 - [ ] add key value validations length (x > 0 && x < 256) and ascii
 - [ ] add shutdown to server
+- [ ] wal
 - [ ] better logging to handle threads and put logs to file
 - [ ] json response + schema
 - [ ] compaction of old memtables

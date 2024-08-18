@@ -116,8 +116,8 @@ impl SsTable {
         match Self::probe_bloom(&f, &key)? {
             (true, index_len) => {
                 if let Some(offset) = Self::lookup_index(&f, index_len as usize, &key)? {
-                    let _block = Self::read_block(&f, offset)?;
-                    // return Ok(block::get(&key));
+                    let block = Self::read_block(&f, offset)?;
+                    return Ok(block.get(key.clone()));
                 }
             }
             _ => (),
