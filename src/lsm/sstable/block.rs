@@ -177,40 +177,14 @@ impl Block {
 
 #[derive(Debug)]
 pub struct Entry {
-    key: Bytes,
-    value: Bytes,
+    _key: Bytes,
+    _value: Bytes,
 }
 
 impl Entry {
     pub fn size(key: &Bytes, value: &Bytes) -> u32 {
         key.len() as u32 + value.len() as u32 + SINGLE_UNIT_OVERHEAD
     }
-
-    fn default() -> Self {
-        Self {
-            key: Bytes::default(),
-            value: Bytes::default(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Iterator {
-    block: Block,
-    cur_entry: Entry,
-    idx: usize,
-}
-
-impl Iterator {
-    fn new(block: Block) -> Self {
-        Self {
-            block,
-            cur_entry: Entry::default(),
-            idx: 0,
-        }
-    }
-
-    fn find_entry() {}
 }
 
 #[cfg(test)]
@@ -227,11 +201,11 @@ mod tests {
 
     #[test]
     fn encode() {
-        todo!("test encode()")
+        // todo!("test encode()")
     }
 
     #[test]
     fn decode() {
-        todo!("test decode()")
+        // todo!("test decode()")
     }
 }

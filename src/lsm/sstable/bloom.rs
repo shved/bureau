@@ -45,6 +45,7 @@ impl BloomSerializable for Bloom<Bytes> {
         buf
     }
 
+    // TODO: Remove panics, return Result.
     fn decode(mut raw: &[u8]) -> Self {
         let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
 

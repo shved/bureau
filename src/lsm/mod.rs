@@ -4,9 +4,9 @@ pub mod memtable;
 mod sstable;
 mod wal;
 
-use crate::lsm::dispatcher::Dispatcher;
 use crate::Responder;
 use bytes::Bytes;
+use dispatcher::Dispatcher;
 use std::fs::create_dir;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -51,55 +51,61 @@ impl Engine {
     pub async fn run(mut self) {
         let p = Path::new(DATA_PATH);
         if !p.exists() {
-            create_dir(p).expect("Could not create data directory")
+            create_dir(p).expect(
+                format!("Could not create data directory at {}", p.to_str().unwrap()).as_str(),
+            );
         }
+
+        let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
+        let disp = Dispatcher::init(disp_rx).unwrap();
+
+        tokio::spawn(disp.run());
 
         // TODO: Change it to select! here to handle shutdown.
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
-                    let res = self.get(key).await;
-                    responder.send(res).ok();
+                    match self.get_from_mem(&key) {
+                        Some(value) => {
+                            responder.send(Ok(Some(value))).ok();
+                        }
+                        None => {
+                            disp_tx
+                                .send(dispatcher::Command::Get { key, responder })
+                                .await
+                                .ok();
+                        }
+                    };
                 }
                 Command::Set {
                     key,
                     value,
                     responder,
-                } => {
-                    let res = self.insert(key, value);
-                    responder.send(res).ok();
-                }
-            }
+                } => match self.memtable.insert(key, value) {
+                    memtable::InsertResult::Available => {
+                        responder.send(Ok(())).ok();
+                    }
+                    memtable::InsertResult::Full => {
+                        self.swap_tables();
+                        disp_tx
+                            .send(dispatcher::Command::CreateTable {
+                                // TODO: Im literally sending a 64kb struct here.
+                                // Remake it here. Shadow table should be owned by dispatcher.
+                                // We could initialize a new table here, and swap them.
+                                // Dispatcher could even have a bunch of shadow tables at the same
+                                // time to write them to disk.
+                                data: self.shadow_table.clone(),
+                            })
+                            .await
+                            .ok();
+                        responder.send(Ok(())).ok();
+                    }
+                },
+            };
         }
     }
 
-    fn insert(&mut self, key: Bytes, value: Bytes) -> crate::Result<()> {
-        match self.memtable.insert(key, value) {
-            memtable::InsertResult::Full => {
-                self.swap_tables();
-                Ok(())
-            }
-            memtable::InsertResult::Available => Ok(()),
-        }
-    }
-
-    async fn get(&self, key: Bytes) -> crate::Result<Option<Bytes>> {
-        if let Some(value) = self.get_from_mem(&key) {
-            return Ok(Some(value));
-        }
-
-        // match self.get_from_disk(key).await {
-        //     Ok(res) => match res {
-        //         Some(value) => Ok(Some(value)),
-        //         None => Ok(None),
-        //     },
-        //     Err(e) => Err(e),
-        // }
-
-        Ok(None)
-    }
-
-    // It only checks hot spots: cache, memtable, shadow table.
+    /// It only checks hot spots: cache, memtable, shadow table.
     fn get_from_mem(&self, key: &Bytes) -> Option<Bytes> {
         // TODO: First search cache.
 
@@ -114,11 +120,7 @@ impl Engine {
         None
     }
 
-    async fn get_from_disk(&self, _key: Bytes) -> crate::Result<Option<Bytes>> {
-        Ok(None)
-    }
-
-    // Swap memtable and shadow table to data while sstable is building.
+    /// Swaps memtable and shadow table to data while sstable is building.
     fn swap_tables(&mut self) {
         // TODO: When SSTable is written WAL should be rotated.
         if self.shadow_table_written {
@@ -126,7 +128,8 @@ impl Engine {
             std::mem::swap(&mut self.memtable, &mut self.shadow_table);
         }
 
-        panic!("handle edge case somehow");
+        // TODO: may be make it possible to spam memtables on demand instead of just swap two.
+        todo!("handle edge case somehow");
     }
 }
 

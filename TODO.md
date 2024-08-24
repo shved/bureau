@@ -1,8 +1,10 @@
 - [x] change dump Arc 'database' to LSM with channels
 - [x] add simple server logs
-- [ ] write sstable after memtable is full
-- [ ] index to track sstables
-- [ ] forward 'get' to sstable index when no value in memtable
+- [x] write sstable after memtable is full
+- [x] index to track sstables
+- [x] forward 'get' to sstable index when no value in memtable
+- [ ] high level test with generated data
+- [ ] more unit test
 - [ ] add key value validations length (x > 0 && x < 256) and ascii
 - [ ] add shutdown to server
 - [ ] wal

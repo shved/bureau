@@ -1,7 +1,5 @@
 pub mod block;
-mod bloom;
-mod compaction;
-pub mod dispatcher;
+pub mod bloom;
 
 use super::memtable::MemTable;
 use super::sstable_path;
@@ -39,7 +37,7 @@ const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 #[derive(Debug)]
 pub struct SsTable {
     blocks: Vec<Block>,
-    id: Uuid,
+    pub id: Uuid,
     pub bloom: Bloom<Bytes>,
 }
 
@@ -94,12 +92,12 @@ impl SsTable {
         content
     }
 
-    pub fn persist(&self, data: &[u8]) -> Result<Uuid> {
+    pub fn persist(&self, data: &[u8]) -> Result<()> {
         let path = sstable_path(&self.id);
         fs::write(&path, data)?;
         fs::File::open(&path)?.sync_all()?;
 
-        Ok(self.id)
+        Ok(())
     }
 
     /// Generates a simple and time ordered uuid (v7).
@@ -128,6 +126,7 @@ impl SsTable {
 
     /// Reads the bloom filter and a couple extra bytes from the table index
     /// to know the table index len for the next call if it will be necessary.
+    // TODO: Remake it to start with offset. A bloom is already
     fn probe_bloom(file: &fs::File, key: &Bytes) -> Result<(bool, u16)> {
         let mut data = vec![0; first_section_len()];
         file.read_exact_at(&mut data, 0)?;
@@ -247,7 +246,7 @@ impl TableIndex {
 }
 
 /// Byte size of the bloom filter section with the checksum.
-fn bloom_section_len() -> usize {
+pub fn bloom_section_len() -> usize {
     bloom::BLOOM_SIZE + bloom::CHECKSUM_SIZE
 }
 

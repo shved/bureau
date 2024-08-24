@@ -11,7 +11,7 @@ TODO: adjust RESERVE value based on the statistics unit.
 const RESERVE: u32 = 64;
 const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MemTable {
     pub map: BTreeMap<Bytes, Bytes>,
     size: u32,
