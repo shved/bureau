@@ -1,4 +1,4 @@
-use bureau::engine::{Command, Engine};
+use bureau::lsm::{Command, Engine};
 use bytes::Bytes;
 use futures::SinkExt;
 use std::env;
@@ -32,9 +32,8 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&addr).await?;
     info!("Listening on: {}", addr);
 
+    // TODO: I dont like it that server is in charge of choosing the buffer size for channels here.
     let (req_tx, req_rx) = mpsc::channel(64);
-    // let (sst_tx, mut sst_rx) = mpsc::channel(req_chan_cap / 2);
-    // let engine = Engine::new(req_rx, sst_rx);
     let engine = Engine::new(req_rx);
 
     tokio::spawn(engine.run());
@@ -95,7 +94,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
                 return Response::Error { msg: e.to_string() };
             }
 
-            let resp = resp_rx.await.unwrap();
+            let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
 
             match resp {
                 Ok(option) => match option {
@@ -123,7 +122,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
                 return Response::Error { msg: e.to_string() };
             }
 
-            let resp = resp_rx.await.unwrap();
+            let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
 
             match resp {
                 Ok(_) => Response::Set {

@@ -1,22 +1,19 @@
 - [x] change dump Arc 'database' to LSM with channels
 - [x] add simple server logs
-- [ ] write sstable after memtable is full
-- [ ] index to track sstables
-- [ ] forward 'get' to sstable index when no value in memtable
+- [x] write sstable after memtable is full
+- [x] index to track sstables
+- [x] forward 'get' to sstable index when no value in memtable
+- [ ] high level test with generated data
+- [ ] more unit test
+- [ ] add key value validations length (x > 0 && x < 256) and ascii
 - [ ] add shutdown to server
+- [ ] wal
 - [ ] better logging to handle threads and put logs to file
 - [ ] json response + schema
-- [ ] write sstable when memtable grows to limit
 - [ ] compaction of old memtables
 - [ ] make a statistics unit
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
-  - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram histogram)
-- [ ] cache and cache strategies
+  - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram)
+- [ ] cache and cache strategies (prob on the sst blooms level - make a pool of hot blooms)
+- [ ] add key-prefix optimization to sst (keys are ordered so we could save space on the same prefix of several keys)
 
-notes for case study:
-- first idea was to take AVL-tree for a memtable, but compared to std-lib BTreeMap performance should not be significantly better, so just stick with btreemap from the std
-- shadow table is a concept to release the lock immediately while sstable is being compacted and written to disk.
-- cache, memtable and shadow mem are always the same position. these are not present in index. index is only for sstables.
-- is index entry a file name?
-- paths to write to get from here: https://www.pathname.com/fhs/pub/fhs-2.3.html#THEVARHIERARCHY (/var)
-- how to protect shadow table for the moment sstable is not yet written to disk
