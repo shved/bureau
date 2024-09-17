@@ -1,0 +1,22 @@
+services:
+  bureau_server:
+    image: rust:latest
+    container_name: bureau_server_container
+    volumes:
+      - .:/usr/src/bureau
+      - ./var/lib:/var/lib
+      - ./var/log:/var/log
+    working_dir: /usr/src/bureau
+    command: cargo run --bin bureau-server -- 0.0.0.0:12650
+    privileged: true
+    ports:
+      - "12650:12650"
+    restart: unless-stopped
+    tty: true
+    stdin_open: false
+    init: true
+    logging:
+      driver: "json-file"
+      # options:
+      #   max-size: "10m"          # Optional: Limit log size
+      #   max-file: "3"

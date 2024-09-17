@@ -126,10 +126,9 @@ impl Engine {
         if self.shadow_table_written {
             self.shadow_table.clear(); // Ensure its empty.
             std::mem::swap(&mut self.memtable, &mut self.shadow_table);
+        } else {
+            panic!("should not happen since disk actions are syncronised with channel");
         }
-
-        // TODO: may be make it possible to spam memtables on demand instead of just swap two.
-        todo!("handle edge case somehow");
     }
 }
 
