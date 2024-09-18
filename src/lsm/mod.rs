@@ -7,12 +7,15 @@ mod wal;
 use crate::Responder;
 use bytes::Bytes;
 use dispatcher::Dispatcher;
+use std::fmt;
 use std::fs::create_dir;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 const DATA_PATH: &str = "/var/lib/bureau/";
+const KEY_LIMIT: usize = 512; // 512B.
+const VALUE_LIMIT: usize = 2048; // 2KB.
 
 pub enum Command {
     Get {
@@ -81,26 +84,33 @@ impl Engine {
                     key,
                     value,
                     responder,
-                } => match self.memtable.insert(key, value) {
-                    memtable::InsertResult::Available => {
-                        responder.send(Ok(())).ok();
+                } => {
+                    if let Err(err) = validate(&key, &value) {
+                        responder.send(Err(err)).ok();
+                        return;
                     }
-                    memtable::InsertResult::Full => {
-                        self.swap_tables();
-                        disp_tx
-                            .send(dispatcher::Command::CreateTable {
-                                // TODO: Im literally sending a 64kb struct here.
-                                // Remake it here. Shadow table should be owned by dispatcher.
-                                // We could initialize a new table here, and swap them.
-                                // Dispatcher could even have a bunch of shadow tables at the same
-                                // time to write them to disk.
-                                data: self.shadow_table.clone(),
-                            })
-                            .await
-                            .ok();
-                        responder.send(Ok(())).ok();
+
+                    match self.memtable.insert(key, value) {
+                        memtable::InsertResult::Available => {
+                            responder.send(Ok(())).ok();
+                        }
+                        memtable::InsertResult::Full => {
+                            self.swap_tables();
+                            disp_tx
+                                .send(dispatcher::Command::CreateTable {
+                                    // TODO: Im literally sending a 64kb struct here.
+                                    // Remake it here. Shadow table should be owned by dispatcher.
+                                    // We could initialize a new table here, and swap them.
+                                    // Dispatcher could even have a bunch of shadow tables at the same
+                                    // time to write them to disk.
+                                    data: self.shadow_table.clone(),
+                                })
+                                .await
+                                .ok();
+                            responder.send(Ok(())).ok();
+                        }
                     }
-                },
+                }
             };
         }
     }
@@ -130,6 +140,18 @@ impl Engine {
             panic!("should not happen since disk actions are syncronised with channel");
         }
     }
+}
+
+fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
+    if key.len() > KEY_LIMIT {
+        return Err(crate::Error::from("key is too long"));
+    }
+
+    if value.len() > VALUE_LIMIT {
+        return Err(crate::Error::from("value is too long"));
+    }
+
+    Ok(())
 }
 
 pub fn sstable_path(table_id: &Uuid) -> PathBuf {
