@@ -29,7 +29,7 @@ const INITIAL_BLOCK_SIZE: u32 = U16_SIZE + CHECKSUM_SIZE as u32;
 
 /// An overhead that a single k/v pair adds to the block.
 /// Includes key len flag, value len flag, and a spot in the offsets section.
-const SINGLE_UNIT_OVERHEAD: u32 = U16_SIZE * 3;
+pub const SINGLE_UNIT_OVERHEAD: u32 = U16_SIZE * 3;
 
 #[derive(Debug)]
 pub struct Block {
@@ -129,7 +129,7 @@ impl Block {
         data.put(raw[..].take(raw.len() - CHECKSUM_SIZE));
 
         assert!(
-            raw.get_u32() != checksum,
+            raw.get_u32() == checksum,
             "Checksum mismatch in block decode"
         );
 

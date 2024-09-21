@@ -3,12 +3,6 @@ use crate::lsm::wal::Wal;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 
-/*
-If memtable size reaches SSTABLE_BYTESYZE - RESERVE, we make an sstable
-right away because next key-value pair will most likely overflow the block size.
-TODO: adjust RESERVE value based on the statistics unit.
-*/
-const RESERVE: u32 = 64;
 const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
 
 #[derive(Debug, Clone)]
@@ -73,12 +67,20 @@ impl MemTable {
     }
 
     pub fn is_full(&self) -> bool {
-        if self.size > (SSTABLE_BYTESIZE - RESERVE) {
+        if self.size > (SSTABLE_BYTESIZE - reserve()) {
             return true;
         }
 
         false
     }
+}
+
+/*
+If memtable size reaches SSTABLE_BYTESYZE - reserve(), we make an sstable
+right away because next key-value pair will most likely overflow the block size.
+*/
+fn reserve() -> u32 {
+    crate::lsm::KEY_LIMIT + crate::lsm::VALUE_LIMIT + block::SINGLE_UNIT_OVERHEAD
 }
 
 #[cfg(test)]
@@ -88,7 +90,7 @@ mod tests {
     #[test]
     fn is_full() {
         let mut mt = MemTable::new();
-        mt.size = SSTABLE_BYTESIZE - RESERVE - 13;
+        mt.size = SSTABLE_BYTESIZE - reserve() - 13;
         let old_size = mt.size;
 
         let res = mt.insert(Bytes::from("bar"), Bytes::from("foo"));

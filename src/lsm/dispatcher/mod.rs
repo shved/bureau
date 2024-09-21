@@ -35,15 +35,14 @@ impl Dispatcher {
         while let Some(cmd) = self.cmd_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
-                    for entry in &self.index.entries {
+                    for entry in self.index.entries.iter() {
                         match SsTable::lookup(&entry.id, &key) {
                             Ok(Some(value)) => {
                                 responder.send(Ok(Some(value))).ok();
                                 return;
                             }
                             Ok(None) => {
-                                responder.send(Ok(None)).ok();
-                                return;
+                                continue;
                             }
                             Err(e) => {
                                 responder.send(Err(e)).ok();

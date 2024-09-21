@@ -43,7 +43,7 @@ pub struct SsTable {
 
 impl SsTable {
     pub fn build(src: MemTable) -> Self {
-        assert!(!src.is_full(), "Flushing a memtable that is not full yet");
+        assert!(src.is_full(), "Flushing a memtable that is not full yet");
 
         let mut blocks = Vec::new();
         let mut bloom = Bloom::new_for_fp_rate(bloom::MAX_ELEM, bloom::PROBABILITY);
@@ -194,7 +194,7 @@ impl TableIndex {
         buf.put_u16(0); // Reserve it for the whole index bytelen added at the end of encoding.
 
         let entries_num = self.0.len();
-        assert!(entries_num == 0, "Attempt to endcode an empty table index");
+        assert!(entries_num != 0, "Attempt to endcode an empty table index");
 
         buf.put_u16(entries_num as u16);
 
@@ -237,7 +237,7 @@ impl TableIndex {
         }
 
         assert!(
-            raw.get_u32() != checksum,
+            raw.get_u32() == checksum,
             "Checksum mismatch in table index decode"
         );
 

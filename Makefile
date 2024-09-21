@@ -1,13 +1,4 @@
-# test:
-	# TODO
-
-# test.integration:
-	# TODO
-
-# bench:
-	# TODO
-
-dev.run:
+dev.up:
 	podman compose -f docker-compose.dev.yml down
 	mkdir -p var/lib
 	mkdir -p var/log
@@ -16,4 +7,10 @@ dev.run:
 dev.down:
 	podman compose -f docker-compose.dev.yml down
 
-.PHONY: dev.run dev.down
+dev.spam:
+	sh ./spam_set_requests.sh
+
+dev.clean:
+	rm dev/var/lib/bureau/*
+
+.PHONY: dev.up dev.down dev.spam

@@ -7,15 +7,14 @@ mod wal;
 use crate::Responder;
 use bytes::Bytes;
 use dispatcher::Dispatcher;
-use std::fmt;
 use std::fs::create_dir;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 const DATA_PATH: &str = "/var/lib/bureau/";
-const KEY_LIMIT: usize = 512; // 512B.
-const VALUE_LIMIT: usize = 2048; // 2KB.
+const KEY_LIMIT: u32 = 512; // 512B.
+const VALUE_LIMIT: u32 = 2048; // 2KB.
 
 pub enum Command {
     Get {
@@ -143,11 +142,11 @@ impl Engine {
 }
 
 fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
-    if key.len() > KEY_LIMIT {
+    if key.len() > KEY_LIMIT as usize {
         return Err(crate::Error::from("key is too long"));
     }
 
-    if value.len() > VALUE_LIMIT {
+    if value.len() > VALUE_LIMIT as usize {
         return Err(crate::Error::from("value is too long"));
     }
 
