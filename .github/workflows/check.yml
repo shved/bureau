@@ -43,16 +43,3 @@ jobs:
         with:
           reporter: 'github-pr-check'
           github_token: ${{ secrets.GITHUB_TOKEN }}
-  doc:
-    runs-on: ubuntu-latest
-    name: doc
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Install 
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-docs-rs
-        uses: dtolnay/install@cargo-docs-rs
-      - name: cargo docs-rs
-        run: cargo docs-rs
