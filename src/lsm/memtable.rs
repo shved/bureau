@@ -42,7 +42,7 @@ impl MemTable {
     }
 
     pub fn get(&self, key: &Bytes) -> Option<Bytes> {
-        self.map.get(key).map(|v| v.clone())
+        self.map.get(key).cloned()
     }
 
     pub fn clear(&mut self) {
@@ -54,7 +54,7 @@ impl MemTable {
         // First, check if the key is already there.
         let mut old_entry_size: u32 = 0;
         if self.map.contains_key(key) {
-            // It is fine to get value here since writes are syncronized via channel.
+            // It is fine to get value here since access is syncronized.
             let old_value = self.map.get(key).unwrap(); // unwrap() is fine here.
             old_entry_size = block::Entry::size(key, &old_value);
         }

@@ -1,9 +1,3 @@
-// use crate::lsm::sstable::bloom_section_len;
-// use crate::lsm::sstable_path;
-// use bloomfilter::Bloom;
-// use crate::lsm::sstable::bloom::BloomSerializable;
-// use bytes::Bytes;
-// use std::os::unix::fs::FileExt;
 use std::fs;
 use uuid::Uuid;
 
@@ -17,7 +11,6 @@ pub struct Index {
 /// An entry in the LSM index representing a single SSTable.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    // bloom: Bloom<Bytes>,
     pub id: Uuid,
 }
 
@@ -47,16 +40,6 @@ impl Index {
         self.entries.push(Entry { id });
         self.entries.extend(old);
     }
-
-    // pub fn search(&self, key: Bytes) -> Option<Uuid> {
-    //     for entry in &self.entries {
-    //         if entry.bloom.check(&key) {
-    //             return Some(entry.id);
-    //         }
-    //     }
-
-    //     None
-    // }
 }
 
 #[cfg(test)]

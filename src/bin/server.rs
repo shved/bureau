@@ -99,7 +99,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
             match resp {
                 Ok(option) => match option {
                     Some(value) => Response::Get {
-                        key: key.into(),
+                        key,
                         value: value.clone(),
                     },
                     None => Response::Error {
@@ -126,7 +126,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
 
             match resp {
                 Ok(_) => Response::Set {
-                    key: key.into(),
+                    key,
                     value: Bytes::from(value),
                 },
                 Err(e) => Response::Error { msg: e.to_string() },
