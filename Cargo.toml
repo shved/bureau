@@ -24,7 +24,7 @@ crc32fast = "1.4.2"
 futures = { version = "0.3.30", features = ["thread-pool"] }
 tokio = { version = "1.40.0", features = ["full", "tracing"] }
 tokio-stream = { version = "0.1.16", features = ["full"] }
-tokio-util = { version = "0.7.11", features = ["full"] }
+tokio-util = { version = "0.7.12", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
 uuid = { version = "1.10.0", features = ["v7"] }
