@@ -16,7 +16,7 @@ name = "search_in_block"
 harness = false
 
 [dependencies]
-anyhow = "1.0.86"
+anyhow = "1.0.89"
 bloomfilter = "1.0.14"
 bytes = "1.7.2"
 clap = { version = "4.5.9", features = ["derive"] }
