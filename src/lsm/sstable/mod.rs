@@ -49,17 +49,14 @@ impl SsTable {
         let mut bloom = Bloom::new_for_fp_rate(bloom::MAX_ELEM, bloom::PROBABILITY);
         let mut cur_block = Block::new();
 
-        for (k, v) in src.map {
-            match cur_block.add(k.clone(), v.clone()) {
-                false => {
-                    blocks.push(cur_block); // Block is full. Put it to the blocks vector.
-                    cur_block = Block::new(); // Set the cursor to be a new block.
-                    cur_block.add(k.clone(), v); // Put the value to a new block.
-                }
-                _ => (),
+        for (k, v) in src.map.iter() {
+            if !cur_block.add(k.clone(), v.clone()) {
+                blocks.push(cur_block); // Block is full. Put it to the blocks vector.
+                cur_block = Block::new(); // Set the cursor to be a new block.
+                cur_block.add(k.clone(), v.clone()); // Put the value to a new block.
             }
 
-            bloom.set(&k);
+            bloom.set(k);
         }
 
         Self {
@@ -111,32 +108,28 @@ impl SsTable {
             .write(false)
             .open(sstable_path(table_id))?;
 
-        match Self::probe_bloom(&f, &key)? {
-            (true, index_len) => {
-                if let Some(offset) = Self::lookup_index(&f, index_len as usize, &key)? {
-                    let block = Self::read_block(&f, offset)?;
-                    return Ok(block.get(key.clone()));
-                }
+        if let (true, index_len) = Self::probe_bloom(&f, key)? {
+            if let Some(offset) = Self::lookup_index(&f, index_len as usize, key)? {
+                let block = Self::read_block(&f, offset)?;
+                return Ok(block.get(key.clone()));
             }
-            _ => (),
         }
 
         Ok(None)
     }
 
     /// Reads the bloom filter and a couple extra bytes from the table index
-    /// to know the table index len for the next call if it will be necessary.
-    // TODO: Remake it to start with offset. A bloom is already
+    /// to get the table index len for the next call if it will be necessary.
     fn probe_bloom(file: &fs::File, key: &Bytes) -> Result<(bool, u16)> {
         let mut data = vec![0; first_section_len()];
         file.read_exact_at(&mut data, 0)?;
 
         let mut index_len_bytes: [u8; 2] = [0, 0];
-        index_len_bytes.copy_from_slice(&mut data[bloom_section_len()..]);
+        index_len_bytes.copy_from_slice(&data[bloom_section_len()..]);
         let index_len = u16::from_be_bytes(index_len_bytes);
         let b = Bloom::decode(&data[..std::mem::size_of::<u16>()]);
 
-        Ok((b.check(&key), index_len))
+        Ok((b.check(key), index_len))
     }
 
     fn lookup_index(file: &fs::File, len: usize, key: &Bytes) -> Result<Option<u32>> {

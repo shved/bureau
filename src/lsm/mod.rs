@@ -4,16 +4,27 @@ pub mod memtable;
 mod sstable;
 mod wal;
 
+use crate::lsm::memtable::MemTable;
 use crate::Responder;
 use bytes::Bytes;
 use dispatcher::Dispatcher;
 use std::fs::create_dir;
 use std::path::{Path, PathBuf};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-const DATA_PATH: &str = "/var/lib/bureau/";
+/// This is where data files will be stored.
+const DATA_PATH: &str = "/var/lib/bureau/"; // TODO: Make configurable.
+
+/// This is how many tables are allowed to be in the process of writing to disk at the same time.
+/// Grow this number to make DB more tolerant to high amount writes, it will consume more memory
+/// in return.
+const DISPATCHER_BUFFER_SIZE: usize = 32; // TODO: Make configurable.
+
+// TODO: Make configurable.
 const KEY_LIMIT: u32 = 512; // 512B.
+
+// TODO: Make configurable.
 const VALUE_LIMIT: u32 = 2048; // 2KB.
 
 pub enum Command {
@@ -33,10 +44,8 @@ pub struct Engine {
     input_rx: mpsc::Receiver<Command>,
     // TODO: Channel to shutdown + tokio::select! inside run loop.
     // shutdown_rx: mpsc::Receiver<Command>,
-    memtable: memtable::MemTable,
-    shadow_table: memtable::MemTable,
+    memtable: MemTable,
     wal: wal::Wal,
-    shadow_table_written: bool, // TODO: May be move it to table level somehow.
 }
 
 impl Engine {
@@ -44,8 +53,6 @@ impl Engine {
         Engine {
             input_rx: rx,
             memtable: memtable::MemTable::new(),
-            shadow_table: memtable::MemTable::new(),
-            shadow_table_written: true,
             wal: wal::Wal {},
         }
     }
@@ -59,7 +66,7 @@ impl Engine {
         }
 
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
-        let disp = Dispatcher::init(disp_rx).unwrap();
+        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE).unwrap(); // TODO: Remove unwrap();
 
         tokio::spawn(disp.run());
 
@@ -94,18 +101,18 @@ impl Engine {
                             responder.send(Ok(())).ok();
                         }
                         memtable::InsertResult::Full => {
-                            self.swap_tables();
+                            let (resp_tx, resp_rx) = oneshot::channel();
+
                             disp_tx
                                 .send(dispatcher::Command::CreateTable {
-                                    // TODO: Im literally sending a 64kb struct here.
-                                    // Remake it here. Shadow table should be owned by dispatcher.
-                                    // We could initialize a new table here, and swap them.
-                                    // Dispatcher could even have a bunch of shadow tables at the same
-                                    // time to write them to disk.
-                                    data: self.shadow_table.clone(),
+                                    data: self.swap_tables(),
+                                    responder: resp_tx,
                                 })
                                 .await
                                 .ok();
+
+                            resp_rx.await.ok(); // Blocks if dispatcher tables buffer is full.
+
                             responder.send(Ok(())).ok();
                         }
                     }
@@ -122,22 +129,15 @@ impl Engine {
             return Some(value);
         }
 
-        if let Some(value) = self.shadow_table.get(key) {
-            return Some(value);
-        }
-
         None
     }
 
-    /// Swaps memtable and shadow table to data while sstable is building.
-    fn swap_tables(&mut self) {
+    /// Swaps memtable with fresh one and sends full table to dispatcher that syncronously write it to disk.
+    fn swap_tables(&mut self) -> memtable::MemTable {
         // TODO: When SSTable is written WAL should be rotated.
-        if self.shadow_table_written {
-            self.shadow_table.clear(); // Ensure its empty.
-            std::mem::swap(&mut self.memtable, &mut self.shadow_table);
-        } else {
-            panic!("should not happen since disk actions are syncronised with channel");
-        }
+        let mut swapped = memtable::MemTable::new();
+        std::mem::swap(&mut self.memtable, &mut swapped);
+        swapped
     }
 }
 

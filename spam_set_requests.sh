@@ -14,5 +14,5 @@ for ((i = 0; i < 400; ++i)); do
       value+="${chars:RANDOM%${#chars}:1}"
   done
 
-  cargo run --bin bureau-client -- --command "SET $key $value"
+  RUSTFLAGS=-Awarnings cargo run --bin bureau-client -- --command "SET $key $value"
 done
