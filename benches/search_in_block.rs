@@ -28,13 +28,13 @@ fn binary_search(offsets: &[u16], data: &[u8], key: Bytes) -> Option<Bytes> {
     while low <= high {
         let mid = low + (high - low) / 2;
 
-        let read_key = parse_frame(&data, offsets[mid] as usize);
+        let read_key = parse_frame(data, offsets[mid] as usize);
 
         match read_key.cmp(&key) {
             std::cmp::Ordering::Less => low = mid + 1,
             std::cmp::Ordering::Greater => high = mid - 1,
             std::cmp::Ordering::Equal => {
-                return Some(parse_frame(&data, offsets[mid] as usize + 2 + key.len()))
+                return Some(parse_frame(data, offsets[mid] as usize + 2 + key.len()))
             }
         }
     }
@@ -97,8 +97,8 @@ fn generate_block_data(len_rng: Range<usize>, position: Position) -> BenchCase {
 
     while size < RAW_DATA_ESTIMATE_SIZE - 80 {
         let entry = Entry {
-            key: Bytes::from(generate_rng(len_rng.clone(), &CHARSET)),
-            value: Bytes::from(generate_rng(len_rng.clone(), &CHARSET)),
+            key: Bytes::from(generate_rng(len_rng.clone(), CHARSET)),
+            value: Bytes::from(generate_rng(len_rng.clone(), CHARSET)),
         };
 
         size += entry_size(&entry);

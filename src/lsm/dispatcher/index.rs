@@ -17,10 +17,11 @@ pub struct Entry {
 /// Holds an ordered list of SSTables present on disk and ready for requests.
 impl Index {
     /// Reads the data folder to look for data files and builds index.
-    // TODO: Remove unwrap.
-    pub fn init() -> std::result::Result<Self, anyhow::Error> {
-        let paths = fs::read_dir(crate::lsm::DATA_PATH).expect("Failed to read data files");
+    // TODO: Remove panic.
+    pub fn init(data_path: String) -> std::result::Result<Self, anyhow::Error> {
+        let paths = fs::read_dir(data_path).expect("Failed to read data files");
 
+        // TODO: Validate files in the dir. At least just check they are all v7 uuids.
         paths
             .into_iter()
             .map(|p| {
@@ -44,5 +45,19 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
+    use tempfile::tempdir;
+
+    #[test]
+    fn prepend() {
+        // TODO
+        // let index = Index()
+    }
+
+    #[test]
+    fn init() {
+        let data_dir = tempdir().expect("Could not create a tempdir for test data");
+        // TODO: write a bunch of files here with uuid v7 names and
+        // check its valid and they are ordered properly.
+    }
 }

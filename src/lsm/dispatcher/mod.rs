@@ -38,8 +38,9 @@ impl Dispatcher {
     pub fn init(
         cmd_rx: mpsc::Receiver<Command>,
         sst_buf_size: usize,
+        data_path: String,
     ) -> std::result::Result<Self, anyhow::Error> {
-        let index = index::Index::init()?;
+        let index = index::Index::init(data_path)?;
 
         Ok(Dispatcher {
             cmd_rx,

@@ -8,7 +8,6 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{error, info, warn};
-use tracing_subscriber;
 
 enum Request {
     Get { key: String },
@@ -34,7 +33,7 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
 
     // TODO: I dont like it that server is in charge of choosing the buffer size for channels here.
     let (req_tx, req_rx) = mpsc::channel(64);
-    let engine = Engine::new(req_rx);
+    let engine = Engine::new(req_rx, None);
 
     tokio::spawn(engine.run());
 

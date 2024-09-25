@@ -46,27 +46,41 @@ pub struct Engine {
     // shutdown_rx: mpsc::Receiver<Command>,
     memtable: MemTable,
     wal: wal::Wal,
+    data_path: String,
 }
 
+/// Engine is a working horse of the database. It holds memtable and a channel to communicate commands to.
 impl Engine {
-    pub fn new(rx: mpsc::Receiver<Command>) -> Engine {
+    pub fn new(rx: mpsc::Receiver<Command>, data_path: Option<String>) -> Engine {
+        let path_str: String;
+
+        if let Some(data_path) = data_path {
+            path_str = data_path;
+        } else {
+            path_str = DATA_PATH.to_owned();
+        }
+
         Engine {
             input_rx: rx,
             memtable: memtable::MemTable::new(),
             wal: wal::Wal {},
+            data_path: path_str,
         }
     }
 
+    /// This function is to run in the background reading commands from the channel. It itself also spawns
+    /// a dispathcher thread that works with everything living on the disk a syncronized way.
     pub async fn run(mut self) {
-        let p = Path::new(DATA_PATH);
-        if !p.exists() {
-            create_dir(p).expect(
-                format!("Could not create data directory at {}", p.to_str().unwrap()).as_str(),
-            );
+        let path = Path::new(&self.data_path);
+
+        if !path.exists() {
+            create_dir(path).unwrap_or_else(|_| panic!("Could not create data directory at {}",
+                    path.to_str().unwrap()));
         }
 
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
-        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE).unwrap(); // TODO: Remove unwrap();
+        let disp =
+            Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, self.data_path.clone()).unwrap(); // TODO: Remove unwrap();
 
         tokio::spawn(disp.run());
 

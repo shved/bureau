@@ -18,6 +18,7 @@ pub enum InsertResult {
 }
 
 impl MemTable {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> MemTable {
         MemTable {
             map: BTreeMap::new(),
@@ -56,7 +57,7 @@ impl MemTable {
         if self.map.contains_key(key) {
             // It is fine to get value here since access is syncronized.
             let old_value = self.map.get(key).unwrap(); // unwrap() is fine here.
-            old_entry_size = block::Entry::size(key, &old_value);
+            old_entry_size = block::Entry::size(key, old_value);
         }
 
         let entry_size = block::Entry::size(key, value);
