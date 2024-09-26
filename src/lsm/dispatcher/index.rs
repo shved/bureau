@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::fs;
 use uuid::Uuid;
 
@@ -21,7 +22,7 @@ impl Index {
     pub fn init(data_path: String) -> std::result::Result<Self, anyhow::Error> {
         let paths = fs::read_dir(data_path).expect("Failed to read data files");
 
-        // TODO: Validate files in the dir. At least just check they are all v7 uuids.
+        // TODO: Better errors initializing index.
         paths
             .into_iter()
             .map(|p| {
@@ -30,7 +31,7 @@ impl Index {
             })
             .collect::<std::result::Result<Vec<Entry>, anyhow::Error>>()
             .map(|mut r| {
-                r.sort_by_key(|e| e.id);
+                r.sort_by_key(|e| Reverse(e.id));
                 Self { entries: r }
             })
     }
@@ -45,19 +46,61 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
-
+    use super::*;
+    use std::fs::File;
     use tempfile::tempdir;
 
     #[test]
     fn prepend() {
-        // TODO
-        // let index = Index()
+        let mut idx = Index {
+            entries: vec![
+                Entry {
+                    id: Uuid::parse_str("01923000-1551-71d1-96b0-4063addc3fcd").unwrap(),
+                },
+                Entry {
+                    id: Uuid::parse_str("01922ffe-ff42-7a24-99af-69793801e519").unwrap(),
+                },
+            ],
+        };
+
+        let to_prepend = "01923001-1551-71d1-96b0-4063addc3fcd";
+
+        idx.prepend(Uuid::parse_str(to_prepend).unwrap());
+
+        assert_eq!(idx.entries[0].id.to_string(), to_prepend)
     }
 
     #[test]
     fn init() {
-        let data_dir = tempdir().expect("Could not create a tempdir for test data");
-        // TODO: write a bunch of files here with uuid v7 names and
-        // check its valid and they are ordered properly.
+        let data_dir = tempdir().expect("could not create a tempdir for test data");
+
+        let ids: [&str; 5] = [
+            "01923000-9809-722f-b567-64f172b54f56",
+            "01923000-4db5-71c9-8586-0554d2c9f956",
+            "01923000-d486-705e-b6fe-f1dcf9cb01ae",
+            "01922ffe-ff42-7a24-99af-69793801e519",
+            "01923000-1551-71d1-96b0-4063addc3fcd",
+        ];
+
+        for name in ids {
+            let file_path = data_dir.path().join(name);
+            File::create(file_path).unwrap_or_else(|_| panic!("could not create file {}", name));
+        }
+
+        match Index::init(data_dir.path().as_os_str().to_str().unwrap().to_string()) {
+            Ok(index) => {
+                assert_eq!(
+                    index.entries[0].id.to_string(),
+                    "01923000-d486-705e-b6fe-f1dcf9cb01ae"
+                );
+                assert_eq!(
+                    index.entries[4].id.to_string(),
+                    "01922ffe-ff42-7a24-99af-69793801e519"
+                )
+            }
+            Err(e) => {
+                panic!("could not init index: {}", e)
+            }
+        }
     }
 }

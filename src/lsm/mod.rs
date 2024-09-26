@@ -74,8 +74,12 @@ impl Engine {
         let path = Path::new(&self.data_path);
 
         if !path.exists() {
-            create_dir(path).unwrap_or_else(|_| panic!("Could not create data directory at {}",
-                    path.to_str().unwrap()));
+            create_dir(path).unwrap_or_else(|_| {
+                panic!(
+                    "Could not create data directory at {}",
+                    path.to_str().unwrap()
+                )
+            });
         }
 
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
