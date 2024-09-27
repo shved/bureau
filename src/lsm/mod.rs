@@ -160,8 +160,16 @@ impl Engine {
 }
 
 fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
+    if key.is_empty() {
+        return Err(crate::Error::from("key is empty"));
+    }
+
     if key.len() > KEY_LIMIT as usize {
         return Err(crate::Error::from("key is too long"));
+    }
+
+    if value.is_empty() {
+        return Err(crate::Error::from("value is empty"));
     }
 
     if value.len() > VALUE_LIMIT as usize {
@@ -173,4 +181,41 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
 
 pub fn sstable_path(table_id: &Uuid) -> PathBuf {
     Path::new(DATA_PATH).join(table_id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate() {
+        let long_arr: &'static [u8; 513] = &[0; 513];
+        let longer_arr: &'static [u8; 2049] = &[0; 2049];
+        let long_key = Bytes::from_static(long_arr);
+        let long_value = Bytes::from_static(longer_arr);
+
+        if let Err(e) = validate(&long_key, &Bytes::from("asdf")) {
+            assert_eq!(e.to_string(), "key is too long");
+        } else {
+            panic!()
+        }
+
+        if let Err(e) = validate(&Bytes::from("asdf"), &long_value) {
+            assert_eq!(e.to_string(), "value is too long");
+        } else {
+            panic!()
+        }
+
+        if let Err(e) = validate(&Bytes::default(), &Bytes::from("asdf")) {
+            assert_eq!(e.to_string(), "key is empty");
+        } else {
+            panic!()
+        }
+
+        if let Err(e) = validate(&Bytes::from("asdf"), &Bytes::default()) {
+            assert_eq!(e.to_string(), "value is empty");
+        } else {
+            panic!()
+        }
+    }
 }
