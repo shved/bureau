@@ -32,4 +32,4 @@ uuid = { version = "1.10.0", features = ["v7"] }
 [dev-dependencies]
 criterion = "0.5.1"
 random-string = "1.1.0"
-tempfile = "3.12.0"
+tempfile = "3.13.0"
