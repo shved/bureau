@@ -192,7 +192,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn entry_size() {
+    fn test_entry_size() {
         assert_eq!(
             super::Entry::size(&Bytes::from("foo"), &Bytes::from("bar")),
             12
@@ -200,12 +200,12 @@ mod tests {
     }
 
     #[test]
-    fn encode() {
+    fn test_encode() {
         // todo!("test encode()")
     }
 
     #[test]
-    fn decode() {
+    fn test_decode() {
         // todo!("test decode()")
     }
 }

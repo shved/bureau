@@ -7,6 +7,8 @@ services:
       - ./var/lib:/var/lib
       - ./var/log:/var/log
     working_dir: /usr/src/bureau
+    environment:
+      - RUST_BACKTRACE=1
     command: cargo run --bin bureau-server -- 0.0.0.0:12650
     privileged: true
     ports:

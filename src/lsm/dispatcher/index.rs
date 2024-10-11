@@ -51,7 +51,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn prepend() {
+    fn test_prepend() {
         let mut idx = Index {
             entries: vec![
                 Entry {
@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn init() {
+    fn test_init() {
         let data_dir = tempdir().expect("could not create a tempdir for test data");
 
         let ids: [&str; 5] = [

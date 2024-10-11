@@ -5,6 +5,7 @@ pub const MAX_ELEM: usize = 6400;
 pub const PROBABILITY: f64 = 0.01;
 pub const CHECKSUM_SIZE: usize = 4; // 4B.
 pub const BLOOM_SIZE: usize = 7713; // 7713B.
+pub const ENCODED_LEN: usize = BLOOM_SIZE + CHECKSUM_SIZE; // 7717B.
 
 pub trait BloomSerializable {
     fn encode(&self) -> Vec<u8>;
@@ -68,6 +69,26 @@ impl BloomSerializable for Bloom<Bytes> {
     }
 }
 
-fn new() -> Bloom<Bytes> {
+pub fn new() -> Bloom<Bytes> {
     Bloom::new_for_fp_rate(MAX_ELEM, PROBABILITY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_decode() {
+        let mut original = new();
+        original.set(&Bytes::from("foo"));
+        original.set(&Bytes::from("bar"));
+
+        let encoded = original.encode();
+        assert_eq!(encoded.len(), ENCODED_LEN);
+
+        let decoded = Bloom::decode(encoded.as_slice());
+        assert_eq!(decoded.bit_vec(), original.bit_vec());
+        assert!(decoded.check(&Bytes::from("foo")));
+        assert!(decoded.check(&Bytes::from("bar")));
+    }
 }

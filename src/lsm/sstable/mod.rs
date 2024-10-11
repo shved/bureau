@@ -30,6 +30,9 @@ Table index entry layout.
 Individual block layout is given where Block is defined.
 */
 
+/// Byte size of the first section to read in the table. It is a sum of bloom filter data,
+/// a bloom filter checksum and table index byte len so we know how much to read further.
+const FIRST_SECTION_LEN: usize = bloom::ENCODED_LEN + std::mem::size_of::<u16>();
 const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 
 /// Sstable is meant to be used the following way. Typical lifecicle of an instance
@@ -46,7 +49,7 @@ impl SsTable {
         assert!(src.is_full(), "Flushing a memtable that is not full yet");
 
         let mut blocks = Vec::new();
-        let mut bloom = Bloom::new_for_fp_rate(bloom::MAX_ELEM, bloom::PROBABILITY);
+        let mut bf = bloom::new();
         let mut cur_block = Block::new();
 
         for (k, v) in src.map.iter() {
@@ -56,13 +59,13 @@ impl SsTable {
                 cur_block.add(k.clone(), v.clone()); // Put the value to a new block.
             }
 
-            bloom.set(k);
+            bf.set(k);
         }
 
         Self {
             id: Self::generate_id(),
             blocks,
-            bloom,
+            bloom: bf,
         }
     }
 
@@ -121,20 +124,20 @@ impl SsTable {
     /// Reads the bloom filter and a couple extra bytes from the table index
     /// to get the table index len for the next call if it will be necessary.
     fn probe_bloom(file: &fs::File, key: &Bytes) -> Result<(bool, u16)> {
-        let mut data = vec![0; first_section_len()];
+        let mut data = vec![0; FIRST_SECTION_LEN];
         file.read_exact_at(&mut data, 0)?;
 
         let mut index_len_bytes: [u8; 2] = [0, 0];
-        index_len_bytes.copy_from_slice(&data[bloom_section_len()..]);
+        index_len_bytes.copy_from_slice(&data[bloom::ENCODED_LEN..]);
         let index_len = u16::from_be_bytes(index_len_bytes);
-        let b = Bloom::decode(&data[..std::mem::size_of::<u16>()]);
+        let b = Bloom::decode(&data[..std::mem::size_of::<u16>()]); // BUG: panic_const_sub_overflow
 
         Ok((b.check(key), index_len))
     }
 
     fn lookup_index(file: &fs::File, len: usize, key: &Bytes) -> Result<Option<u32>> {
         let mut data = vec![0; len];
-        file.read_exact_at(&mut data, first_section_len() as u64)?;
+        file.read_exact_at(&mut data, FIRST_SECTION_LEN as u64)?;
 
         let index = TableIndex::decode(&data);
         let entry = index
@@ -238,13 +241,34 @@ impl TableIndex {
     }
 }
 
-/// Byte size of the bloom filter section with the checksum.
-pub fn bloom_section_len() -> usize {
-    bloom::BLOOM_SIZE + bloom::CHECKSUM_SIZE
-}
+// TODO: tests for layout and final block and sstable sizes. Kind of quality regression tests.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsm::memtable::{MemTable, ProbeResult};
+    use bytes::Bytes;
 
-/// Byte size of the first section to read in the table. It is a sum of
-/// bloom filter data, a bloom filter checksum and table index byte len.
-fn first_section_len() -> usize {
-    bloom_section_len() + std::mem::size_of::<u16>()
+    #[test]
+    fn test_build() {
+        let mt = create_full_memtable();
+        let built = SsTable::build(mt);
+        assert_eq!(built.blocks.len(), 16);
+    }
+
+    fn create_full_memtable() -> MemTable {
+        let mut mt = MemTable::new(None);
+        loop {
+            // Fill it with random simple uuids.
+            let key = Bytes::from(Uuid::now_v7().to_string());
+            let value = Bytes::from(Uuid::now_v7().to_string());
+            match mt.probe(&key, &value) {
+                ProbeResult::Available(new_size) => {
+                    mt.insert(key, value, Some(new_size));
+                }
+                ProbeResult::Full => {
+                    return mt;
+                }
+            }
+        }
+    }
 }

@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 /// This is where data files will be stored.
-const DATA_PATH: &str = "/var/lib/bureau/"; // TODO: Make configurable.
+const DATA_PATH: &str = "/var/lib/bureau"; // TODO: Make configurable.
 
 /// This is how many tables are allowed to be in the process of writing to disk at the same time.
 /// Grow this number to make DB more tolerant to high amount writes, it will consume more memory
@@ -62,14 +62,15 @@ impl Engine {
 
         Engine {
             input_rx: rx,
-            memtable: memtable::MemTable::new(),
+            memtable: memtable::MemTable::new(None),
             wal: wal::Wal {},
             data_path: path_str,
         }
     }
 
-    /// This function is to run in the background reading commands from the channel. It itself also spawns
-    /// a dispathcher thread that works with everything living on the disk a syncronized way.
+    /// This function is to run in the background thread, to read and handle commands from
+    /// the channel. It itself also spawns a dispathcher thread that works with everything
+    /// living on the disk a syncronized way.
     pub async fn run(mut self) {
         let path = Path::new(&self.data_path);
 
@@ -114,24 +115,29 @@ impl Engine {
                         return;
                     }
 
-                    match self.memtable.insert(key, value) {
-                        memtable::InsertResult::Available => {
+                    match self.memtable.probe(&key, &value) {
+                        memtable::ProbeResult::Available(new_size) => {
+                            self.memtable.insert(key, value, Some(new_size));
                             responder.send(Ok(())).ok();
                         }
-                        memtable::InsertResult::Full => {
+                        memtable::ProbeResult::Full => {
+                            // Swap tables and respond to client first.
+                            let old_table = self.swap_table();
+                            self.memtable.insert(key, value, None);
+                            responder.send(Ok(())).ok();
+
+                            // Now send full table to dispatcher to put it to disk.
                             let (resp_tx, resp_rx) = oneshot::channel();
 
                             disp_tx
                                 .send(dispatcher::Command::CreateTable {
-                                    data: self.swap_tables(),
+                                    data: old_table,
                                     responder: resp_tx,
                                 })
                                 .await
                                 .ok();
 
                             resp_rx.await.ok(); // Blocks if dispatcher tables buffer is full.
-
-                            responder.send(Ok(())).ok();
                         }
                     }
                 }
@@ -151,9 +157,9 @@ impl Engine {
     }
 
     /// Swaps memtable with fresh one and sends full table to dispatcher that syncronously write it to disk.
-    fn swap_tables(&mut self) -> memtable::MemTable {
+    fn swap_table(&mut self) -> memtable::MemTable {
         // TODO: When SSTable is written WAL should be rotated.
-        let mut swapped = memtable::MemTable::new();
+        let mut swapped = memtable::MemTable::new(None);
         std::mem::swap(&mut self.memtable, &mut swapped);
         swapped
     }
