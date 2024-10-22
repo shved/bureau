@@ -18,7 +18,7 @@ harness = false
 [dependencies]
 anyhow = "1.0.90"
 bloomfilter = "1.0.14"
-bytes = "1.7.2"
+bytes = "1.8.0"
 clap = { version = "4.5.20", features = ["derive"] }
 crc32fast = "1.4.2"
 futures = { version = "0.3.31", features = ["thread-pool"] }
