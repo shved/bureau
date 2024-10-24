@@ -6,7 +6,8 @@
 - [x] rework cloning of a memtable to send just initilized table; remove shadowtable since there is no need for it
 - [x] add key value validations length (x > 0 && x < 256) and ascii
 - [x] make CI setup with clippy, tests, and other things
-- [ ] rework memtable insert to probe size first
+- [x] rework memtable insert to probe size first
+- [ ] untie DATA_PATH not only from engine but from sstable which is even more important
 - [ ] more unit tests
 - [ ] high level test with tests/proptests.rs
 - [ ] better logging to handle threads and put logs to file
