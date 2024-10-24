@@ -2,14 +2,12 @@ pub mod block;
 pub mod bloom;
 
 use super::memtable::MemTable;
-use super::sstable_path;
 use crate::Result;
+use crate::StorageEntry;
 use block::Block;
 use bloom::BloomSerializable;
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
-use std::fs;
-use std::os::unix::fs::FileExt;
 use uuid::Uuid;
 
 /*
@@ -92,28 +90,15 @@ impl SsTable {
         content
     }
 
-    pub fn persist(&self, data: &[u8]) -> Result<()> {
-        let path = sstable_path(&self.id);
-        fs::write(&path, data)?;
-        fs::File::open(&path)?.sync_all()?;
-
-        Ok(())
-    }
-
     /// Generates a simple and time ordered uuid (v7).
     fn generate_id() -> Uuid {
         Uuid::now_v7()
     }
 
-    pub fn lookup(table_id: &Uuid, key: &Bytes) -> Result<Option<Bytes>> {
-        let f = fs::File::options()
-            .read(true)
-            .write(false)
-            .open(sstable_path(table_id))?;
-
-        if let (true, index_len) = Self::probe_bloom(&f, key)? {
-            if let Some(offset) = Self::lookup_index(&f, index_len as usize, key)? {
-                let block = Self::read_block(&f, offset)?;
+    pub fn lookup(blob: &impl StorageEntry, key: &Bytes) -> Result<Option<Bytes>> {
+        if let (true, index_len) = Self::probe_bloom(blob, key)? {
+            if let Some(offset) = Self::lookup_index(blob, index_len as usize, key)? {
+                let block = Self::read_block(blob, offset)?;
                 return Ok(block.get(key.clone()));
             }
         }
@@ -123,9 +108,9 @@ impl SsTable {
 
     /// Reads the bloom filter and a couple extra bytes from the table index
     /// to get the table index len for the next call if it will be necessary.
-    fn probe_bloom(file: &fs::File, key: &Bytes) -> Result<(bool, u16)> {
+    fn probe_bloom(blob: &impl StorageEntry, key: &Bytes) -> Result<(bool, u16)> {
         let mut data = vec![0; FIRST_SECTION_LEN];
-        file.read_exact_at(&mut data, 0)?;
+        blob.read_at(&mut data, 0)?;
 
         let mut index_len_bytes: [u8; 2] = [0, 0];
         index_len_bytes.copy_from_slice(&data[bloom::ENCODED_LEN..]);
@@ -135,9 +120,9 @@ impl SsTable {
         Ok((b.check(key), index_len))
     }
 
-    fn lookup_index(file: &fs::File, len: usize, key: &Bytes) -> Result<Option<u32>> {
+    fn lookup_index(blob: &impl StorageEntry, len: usize, key: &Bytes) -> Result<Option<u32>> {
         let mut data = vec![0; len];
-        file.read_exact_at(&mut data, FIRST_SECTION_LEN as u64)?;
+        blob.read_at(&mut data, FIRST_SECTION_LEN as u64)?;
 
         let index = TableIndex::decode(&data);
         let entry = index
@@ -150,9 +135,9 @@ impl SsTable {
         }
     }
 
-    fn read_block(file: &fs::File, offset: u32) -> Result<Block> {
+    fn read_block(blob: &impl StorageEntry, offset: u32) -> Result<Block> {
         let mut data = vec![0; block::BLOCK_BYTESIZE];
-        file.read_exact_at(&mut data, offset as u64)?;
+        blob.read_at(&mut data, offset as u64)?;
 
         Ok(Block::decode(&data))
     }
@@ -271,4 +256,7 @@ mod tests {
             }
         }
     }
+
+    // #[test]
+    fn test_encode_decode_table_index() {}
 }

@@ -1,4 +1,5 @@
-use bureau::lsm::{Command, Engine};
+use bureau::lsm::{Command, Engine, DATA_PATH};
+use bureau::storage;
 use bytes::Bytes;
 use futures::SinkExt;
 use std::env;
@@ -31,9 +32,9 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&addr).await?;
     info!("Listening on: {}", addr);
 
-    // TODO: I dont like it that server is in charge of choosing the buffer size for channels here.
     let (req_tx, req_rx) = mpsc::channel(64);
-    let engine = Engine::new(req_rx, None);
+    let stor = storage::new(DATA_PATH);
+    let engine = Engine::new(req_rx, stor);
 
     tokio::spawn(engine.run());
 
