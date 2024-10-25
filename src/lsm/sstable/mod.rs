@@ -226,7 +226,6 @@ impl TableIndex {
     }
 }
 
-// TODO: tests for layout and final block and sstable sizes. Kind of quality regression tests.
 #[cfg(test)]
 mod tests {
     use super::*;
