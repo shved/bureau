@@ -8,15 +8,16 @@ use block::Block;
 use bloom::BloomSerializable;
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
+use std::io::Cursor;
 use uuid::Uuid;
 
 /*
 SST layout schema. First section is to be read first to make the initial checks of the table.
--------------------------------------------------------------------------------------------------------------------------
-| Bloom filter and Index len |                         Table Index                          |       Blocks Section      |
-----------------------------------------------------------------------------------------------------------
-|       7717 Bytes + 2B      | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
--------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+| Bloom filter |                                Table Index                                    |       Blocks Section      |
+----------------------------------------------------------------------------------------------------------------------------
+|  7717 Bytes  | Index len (2B) | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
+----------------------------------------------------------------------------------------------------------------------------
 
 Table index entry layout.
 --------------------------------------------------------------------------
@@ -28,9 +29,9 @@ Table index entry layout.
 Individual block layout is given where Block is defined.
 */
 
-/// Byte size of the first section to read in the table. It is a sum of bloom filter data,
-/// a bloom filter checksum and table index byte len so we know how much to read further.
-const FIRST_SECTION_LEN: usize = bloom::ENCODED_LEN + std::mem::size_of::<u16>();
+/// Byte size of the first section to read in the table. It is a sum of encoded bloom filter
+/// data and table index byte len so we know how much to read in the next step if needed.
+const FIRST_READ_LEN: usize = bloom::ENCODED_LEN + std::mem::size_of::<u16>();
 const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 
 /// Sstable is meant to be used the following way. Typical lifecicle of an instance
@@ -106,24 +107,27 @@ impl SsTable {
         Ok(None)
     }
 
-    /// Reads the bloom filter and a couple extra bytes from the table index
-    /// to get the table index len for the next call if it will be necessary.
+    /// Reads the bloom filter and a couple extra bytes from the table index to get the table
+    /// index len for the next call if it will be necessary. Reading index len in advance is made
+    /// to avoid extra read from disk on the next step.
     fn probe_bloom(blob: &impl StorageEntry, key: &Bytes) -> Result<(bool, u16)> {
-        let mut data = vec![0; FIRST_SECTION_LEN];
+        let mut data = vec![0; FIRST_READ_LEN];
         blob.read_at(&mut data, 0)?;
 
         let mut index_len_bytes: [u8; 2] = [0, 0];
         index_len_bytes.copy_from_slice(&data[bloom::ENCODED_LEN..]);
         let index_len = u16::from_be_bytes(index_len_bytes);
-        let b = Bloom::decode(&data[..std::mem::size_of::<u16>()]); // BUG: panic_const_sub_overflow
+        let b = Bloom::decode(&data[..bloom::ENCODED_LEN]);
 
         Ok((b.check(key), index_len))
     }
 
     fn lookup_index(blob: &impl StorageEntry, len: usize, key: &Bytes) -> Result<Option<u32>> {
         let mut data = vec![0; len];
-        blob.read_at(&mut data, FIRST_SECTION_LEN as u64)?;
+        blob.read_at(&mut data, bloom::ENCODED_LEN as u64)?;
 
+        // TODO: Could be optimised so that offset will be returned immediately when it is found.
+        // Wont add much to performance though.
         let index = TableIndex::decode(&data);
         let entry = index
             .0
@@ -175,7 +179,7 @@ impl TableIndex {
         buf.put_u16(0); // Reserve it for the whole index bytelen added at the end of encoding.
 
         let entries_num = self.0.len();
-        assert!(entries_num != 0, "Attempt to endcode an empty table index");
+        assert_ne!(entries_num, 0, "Attempt to endcode an empty table index");
 
         buf.put_u16(entries_num as u16);
 
@@ -187,29 +191,38 @@ impl TableIndex {
             buf.put_u32(entry.offset);
         }
 
+        let index_len = buf.len() + CHECKSUM_SIZE;
+        let index_len_bytes: [u8; 2] = (index_len as u16).to_be_bytes();
+        buf[0] = index_len_bytes[0];
+        buf[1] = index_len_bytes[1];
+
         let checksum = crc32fast::hash(&buf[..]);
         buf.put_u32(checksum);
-
-        let index_len: [u8; 2] = (buf.len() as u16).to_be_bytes();
-        buf[0] = index_len[0];
-        buf[1] = index_len[1];
 
         buf
     }
 
-    /// u16 reserved for byte len of a table index sector in the process of encoding
-    /// should not be included in the slice passed. Only valuable data is expected here.
-    /// Index bytelen will be read separately along with the bloom filter.
-    fn decode(mut raw: &[u8]) -> Self {
-        let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
+    fn decode(raw: &[u8]) -> Self {
+        let mut buf = Cursor::new(raw);
+        let checksum = crc32fast::hash(&raw[..buf.remaining() - CHECKSUM_SIZE]);
+
+        let encoded_len = buf.get_u16();
+        assert_eq!(
+            encoded_len as usize,
+            raw.len(),
+            "Blob len encoded {}, but {} was passed",
+            encoded_len,
+            raw.len()
+        );
+
         let mut table_index = TableIndex::new();
-        let entries_num = raw.get_u32() as usize;
+        let entries_num = buf.get_u16() as usize;
         for _ in 0..entries_num {
-            let first_key_len = raw.get_u16() as usize;
-            let first_key = raw.copy_to_bytes(first_key_len);
-            let last_key_len: usize = raw.get_u16() as usize;
-            let last_key = raw.copy_to_bytes(last_key_len);
-            let offset = raw.get_u32();
+            let first_key_len = buf.get_u16() as usize;
+            let first_key = buf.copy_to_bytes(first_key_len);
+            let last_key_len: usize = buf.get_u16() as usize;
+            let last_key = buf.copy_to_bytes(last_key_len);
+            let offset = buf.get_u32();
             table_index.0.push(IndexEntry {
                 offset,
                 first_key,
@@ -217,8 +230,9 @@ impl TableIndex {
             });
         }
 
-        assert!(
-            raw.get_u32() == checksum,
+        assert_eq!(
+            buf.get_u32(),
+            checksum,
             "Checksum mismatch in table index decode"
         );
 
@@ -230,17 +244,13 @@ impl TableIndex {
 mod tests {
     use super::*;
     use crate::lsm::memtable::{MemTable, ProbeResult};
+    use crate::storage::mem;
+    use crate::Storage;
     use bytes::Bytes;
+    use rand::seq::SliceRandom;
 
-    #[test]
-    fn test_build() {
-        let mt = create_full_memtable();
-        let built = SsTable::build(mt);
-        assert_eq!(built.blocks.len(), 16);
-    }
-
-    fn create_full_memtable() -> MemTable {
-        let mut mt = MemTable::new(None);
+    fn create_full_memtable(size: Option<u32>) -> (MemTable, Bytes) {
+        let mut mt = MemTable::new(size);
         loop {
             // Fill it with random simple uuids.
             let key = Bytes::from(Uuid::now_v7().to_string());
@@ -250,12 +260,105 @@ mod tests {
                     mt.insert(key, value, Some(new_size));
                 }
                 ProbeResult::Full => {
-                    return mt;
+                    let internal_map = mt.map.clone();
+                    let keys = internal_map.keys().cloned().collect::<Vec<Bytes>>();
+                    let key = keys.choose(&mut rand::thread_rng()).unwrap();
+
+                    return (mt, key.clone());
                 }
             }
         }
     }
 
-    // #[test]
-    fn test_encode_decode_table_index() {}
+    #[test]
+    fn test_build() {
+        let mt = create_full_memtable(None);
+        let built = SsTable::build(mt.0);
+        assert_eq!(built.blocks.len(), 16);
+    }
+
+    #[test]
+    fn test_lookup() {
+        let mt = create_full_memtable(Some(8 * 1024));
+        let built = SsTable::build(mt.0);
+        let encoded = built.encode();
+
+        let stor = mem::new();
+        let result = stor.write(&built.id, encoded.as_ref());
+        assert!(result.is_ok(), "persisting a table: {:?}", result.err());
+
+        let open_res = stor.open(&built.id);
+        assert!(open_res.is_ok());
+
+        let blob = open_res.unwrap();
+
+        // let res = SsTable::lookup(&blob, &mt.1);
+        // assert!(res.is_ok());
+        // let res = res.unwrap();
+
+        // assert!(res.is_some())
+    }
+
+    #[test]
+    fn test_probe_bloom_and_lookup_index() {
+        let mt = create_full_memtable(Some(8 * 1024));
+        let key = &mt.1;
+
+        let built = SsTable::build(mt.0);
+        let encoded = built.encode();
+
+        let res = SsTable::probe_bloom(&encoded, key);
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert!(res.0);
+        assert_eq!(res.1, 168);
+
+        let res = SsTable::lookup_index(&encoded, 168, key);
+        assert!(res.is_ok());
+    }
+
+    fn make_test_index() -> TableIndex {
+        let mut ti = TableIndex::new();
+        ti.0.push(IndexEntry::new(
+            1000,
+            Bytes::from("1_block_start"),
+            Bytes::from("1_block_end"),
+        ));
+        ti.0.push(IndexEntry::new(
+            2000,
+            Bytes::from("2_block_start"),
+            Bytes::from("2_block_end"),
+        ));
+        ti.0.push(IndexEntry::new(
+            3000,
+            Bytes::from("3_block_start"),
+            Bytes::from("3_block_end"),
+        ));
+
+        ti
+    }
+
+    #[test]
+    fn test_index_encode() {
+        let ti = make_test_index();
+        let encoded = ti.encode();
+        assert_eq!(encoded.len(), 104);
+
+        let mut cloned = Cursor::new(encoded.clone());
+        let len_encoded = cloned.get_u16();
+        assert_eq!(len_encoded, 104);
+        let blocks_count = cloned.get_u16();
+        assert_eq!(blocks_count, ti.0.len() as u16);
+    }
+
+    #[test]
+    fn test_index_decode() {
+        let ti = make_test_index();
+        let encoded = ti.encode();
+
+        let decoded = TableIndex::decode(encoded.as_ref());
+        assert_eq!(decoded.0.len(), ti.0.len());
+        assert_eq!(decoded.0[0].offset, ti.0[0].offset);
+        assert_eq!(decoded.0[2].offset, ti.0[2].offset);
+    }
 }

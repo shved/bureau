@@ -1,5 +1,5 @@
 mod cache;
-mod mem;
+pub mod mem;
 
 use std::fs;
 use std::io;

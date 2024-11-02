@@ -1,5 +1,6 @@
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
+use std::io::Cursor;
 
 pub const MAX_ELEM: usize = 6400;
 pub const PROBABILITY: f64 = 0.01;
@@ -43,27 +44,38 @@ impl BloomSerializable for Bloom<Bytes> {
         let checksum = crc32fast::hash(&buf[..buf.capacity() - CHECKSUM_SIZE]);
         buf.put_u32(checksum);
 
+        assert_eq!(buf.capacity(), BLOOM_SIZE + CHECKSUM_SIZE);
+
         buf
     }
 
     // TODO: Remove panics, return Result.
-    fn decode(mut raw: &[u8]) -> Self {
-        let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
+    fn decode(raw: &[u8]) -> Self {
+        assert_eq!(
+            raw.len(),
+            ENCODED_LEN,
+            "Blob should be {} bytes, but {} was passed",
+            ENCODED_LEN,
+            raw.len()
+        );
 
-        let bitmap_bits = raw.get_u64();
-        let k_num = raw.get_u32();
+        let mut buf = Cursor::new(raw);
+        let checksum = crc32fast::hash(&raw[..BLOOM_SIZE]);
+
+        let bitmap_bits = buf.get_u64();
+        let k_num = buf.get_u32();
         let sip_keys = [
-            (raw.get_u64(), raw.get_u64()),
-            (raw.get_u64(), raw.get_u64()),
+            (buf.get_u64(), buf.get_u64()),
+            (buf.get_u64(), buf.get_u64()),
         ];
-        let bitmap = raw.copy_to_bytes(raw.remaining() - CHECKSUM_SIZE);
+        let bitmap = buf.copy_to_bytes(buf.remaining() - CHECKSUM_SIZE);
 
-        let checksum_decoded = raw.get_u32();
+        let checksum_decoded = buf.get_u32();
 
-        if checksum != checksum_decoded {
-            panic!("Checksum mismatch in bloom filter decode")
-        }
-        assert!(!raw.has_remaining());
+        assert_eq!(
+            checksum, checksum_decoded,
+            "Checksum mismatch in bloom filter decode"
+        );
 
         Self::from_existing(bitmap.as_ref(), bitmap_bits, k_num, sip_keys)
     }

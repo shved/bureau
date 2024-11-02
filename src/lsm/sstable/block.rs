@@ -1,4 +1,5 @@
 use bytes::{Buf, BufMut, Bytes};
+use std::io::Cursor;
 
 /*
 Block layout schema.
@@ -104,8 +105,9 @@ impl Block {
         let checksum = crc32fast::hash(&buf);
         buf.put_u32(checksum);
 
-        assert!(
-            buf.len() == BLOCK_BYTESIZE,
+        assert_eq!(
+            buf.len(),
+            BLOCK_BYTESIZE,
             "Block encoded exceeds the block bytesize"
         );
 
@@ -113,25 +115,28 @@ impl Block {
     }
 
     pub fn decode(mut raw: &[u8]) -> Self {
-        assert!(
-            raw.len() == BLOCK_BYTESIZE,
+        assert_eq!(
+            raw.len(),
+            BLOCK_BYTESIZE,
             "Byte slice to decode a block exceeds the block size"
         );
 
-        let checksum = crc32fast::hash(&raw[..raw.remaining() - CHECKSUM_SIZE]);
-        let offsets_num = raw.get_u16();
-        let mut offsets = Vec::with_capacity(offsets_num as usize * 2);
+        let mut buf = Cursor::new(raw);
+
+        let checksum = crc32fast::hash(&raw[..buf.remaining() - CHECKSUM_SIZE]);
+        let offsets_num = buf.get_u16();
+        let mut offsets = Vec::with_capacity(offsets_num as usize * std::mem::size_of::<u16>());
         for _ in 0..offsets_num {
-            offsets.push(raw.get_u16());
+            offsets.push(buf.get_u16());
         }
 
-        let mut data = Vec::with_capacity(raw.len() - CHECKSUM_SIZE);
-        data.put(raw[..].take(raw.len() - CHECKSUM_SIZE));
+        let data_start = buf.position() as usize;
+        let data_end = data_start + buf.remaining() - CHECKSUM_SIZE;
+        let data_len = data_end - data_start;
+        let data: Vec<u8> = raw[data_start..data_end].to_vec();
+        buf.advance(data_len);
 
-        assert!(
-            raw.get_u32() == checksum,
-            "Checksum mismatch in block decode"
-        );
+        assert_eq!(raw.get_u32(), checksum, "Checksum mismatch in block decode");
 
         Self {
             data,

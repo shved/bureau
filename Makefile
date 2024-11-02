@@ -13,4 +13,4 @@ dev.spam:
 dev.clean:
 	rm var/lib/bureau/*
 
-.PHONY: dev.up dev.down dev.spam
+.PHONY: dev.up dev.down dev.spam dev.clean
