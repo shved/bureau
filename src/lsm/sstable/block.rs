@@ -30,7 +30,7 @@ const INITIAL_BLOCK_SIZE: u32 = U16_SIZE + CHECKSUM_SIZE as u32;
 
 /// An overhead that a single k/v pair adds to the block.
 /// Includes key len flag, value len flag, and a spot in the offsets section.
-pub const SINGLE_UNIT_OVERHEAD: u32 = U16_SIZE * 3;
+pub const ENTRY_OVERHEAD: u32 = U16_SIZE * 3;
 
 #[derive(Debug)]
 pub struct Block {
@@ -188,7 +188,7 @@ pub struct Entry {
 
 impl Entry {
     pub fn size(key: &Bytes, value: &Bytes) -> u32 {
-        key.len() as u32 + value.len() as u32 + SINGLE_UNIT_OVERHEAD
+        key.len() as u32 + value.len() as u32 + ENTRY_OVERHEAD
     }
 }
 

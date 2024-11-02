@@ -1,7 +1,7 @@
 pub mod block;
 pub mod bloom;
 
-use super::memtable::MemTable;
+use crate::lsm::memtable::MemTable;
 use crate::Result;
 use crate::StorageEntry;
 use block::Block;
@@ -34,7 +34,7 @@ Individual block layout is given where Block is defined.
 const FIRST_READ_LEN: usize = bloom::ENCODED_LEN + std::mem::size_of::<u16>();
 const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 
-/// Sstable is meant to be used the following way. Typical lifecicle of an instance
+/// SsTable is meant to be used the following way. Typical lifecicle of an instance
 /// can be described as a set of calls: build -> encode -> persist and then many lookups.
 #[derive(Debug)]
 pub struct SsTable {
@@ -243,13 +243,13 @@ impl TableIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsm::memtable::{MemTable, ProbeResult};
+    use crate::lsm::memtable::{MemTable, ProbeResult, SsTableSize};
     use crate::storage::mem;
     use crate::Storage;
     use bytes::Bytes;
     use rand::seq::SliceRandom;
 
-    fn create_full_memtable(size: Option<u32>) -> (MemTable, Bytes) {
+    fn create_full_memtable(size: SsTableSize) -> (MemTable, Bytes) {
         let mut mt = MemTable::new(size);
         loop {
             // Fill it with random simple uuids.
@@ -272,14 +272,14 @@ mod tests {
 
     #[test]
     fn test_build() {
-        let mt = create_full_memtable(None);
+        let mt = create_full_memtable(SsTableSize::Default);
         let built = SsTable::build(mt.0);
         assert_eq!(built.blocks.len(), 16);
     }
 
     #[test]
     fn test_lookup() {
-        let mt = create_full_memtable(Some(8 * 1024));
+        let mt = create_full_memtable(SsTableSize::Is(8 * 1024));
         let built = SsTable::build(mt.0);
         let encoded = built.encode();
 
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_probe_bloom_and_lookup_index() {
-        let mt = create_full_memtable(Some(8 * 1024));
+        let mt = create_full_memtable(SsTableSize::Is(8 * 1024));
         let key = &mt.1;
 
         let built = SsTable::build(mt.0);

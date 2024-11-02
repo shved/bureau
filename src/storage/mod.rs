@@ -1,6 +1,7 @@
 mod cache;
 pub mod mem;
 
+use crate::lsm::DATA_PATH;
 use std::fs;
 use std::io;
 use std::os::unix::fs::FileExt;
@@ -12,10 +13,20 @@ pub struct FsStorage {
     data_path: PathBuf,
 }
 
-pub fn new(path: &str) -> FsStorage {
-    let data_path = PathBuf::from(path);
+pub enum DataPath {
+    Default,
+    Is(String),
+}
 
-    FsStorage { data_path }
+pub fn new(path: DataPath) -> FsStorage {
+    match path {
+        DataPath::Default => FsStorage {
+            data_path: PathBuf::from(DATA_PATH),
+        },
+        DataPath::Is(path_str) => FsStorage {
+            data_path: PathBuf::from(path_str),
+        },
+    }
 }
 
 impl crate::Storage for FsStorage {

@@ -1,5 +1,6 @@
-use bureau::lsm::{Command, Engine, DATA_PATH};
+use bureau::lsm::{Command, Engine};
 use bureau::storage;
+use bureau::storage::DataPath;
 use bytes::Bytes;
 use futures::SinkExt;
 use std::env;
@@ -33,7 +34,7 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
     info!("Listening on: {}", addr);
 
     let (req_tx, req_rx) = mpsc::channel(64);
-    let stor = storage::new(DATA_PATH);
+    let stor = storage::new(DataPath::Default);
     let engine = Engine::new(req_rx, stor);
 
     tokio::spawn(engine.run());

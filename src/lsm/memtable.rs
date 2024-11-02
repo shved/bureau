@@ -5,7 +5,7 @@ use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 
 const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
-const MAX_ENTRY_SIZE: u32 = lsm::KEY_LIMIT + lsm::VALUE_LIMIT + block::SINGLE_UNIT_OVERHEAD;
+const MAX_ENTRY_SIZE: u32 = lsm::KEY_LIMIT + lsm::VALUE_LIMIT + block::ENTRY_OVERHEAD;
 
 /// It's a map with ordered keys. Size keeps track of memtable size in bytes
 /// according to layout of sstable. Max size is a limit after which a table
@@ -23,16 +23,19 @@ pub enum ProbeResult {
     Full,
 }
 
+#[derive(Debug)]
+pub enum SsTableSize {
+    Default,
+    Is(usize),
+}
+
 impl MemTable {
     #[allow(clippy::new_without_default)]
-    pub fn new(max_size_opt: Option<u32>) -> MemTable {
-        let max_size: u32;
-
-        if let Some(size) = max_size_opt {
-            max_size = size;
-        } else {
-            max_size = SSTABLE_BYTESIZE;
-        }
+    pub fn new(size: SsTableSize) -> MemTable {
+        let max_size = match size {
+            SsTableSize::Default => SSTABLE_BYTESIZE,
+            SsTableSize::Is(size) => size as u32,
+        };
 
         MemTable {
             map: BTreeMap::new(),
@@ -120,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_is_full() {
-        let mut mt = MemTable::new(None);
+        let mut mt = MemTable::new(SsTableSize::Default);
         mt.size = mt.max_size - MAX_ENTRY_SIZE;
         assert!(!mt.is_full());
 
@@ -130,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_new_size() {
-        let mut mt = MemTable::new(None);
+        let mut mt = MemTable::new(SsTableSize::Default);
         let first_key = Bytes::from("foo");
         let first_value = Bytes::from("bar");
         let size = Entry::size(&first_key, &first_value);
@@ -153,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        let mut mt = MemTable::new(Some(MAX_ENTRY_SIZE + 1));
+        let mut mt = MemTable::new(SsTableSize::Is((MAX_ENTRY_SIZE + 1) as usize));
         assert_eq!(mt.size, 0);
 
         mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(12));
@@ -164,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut mt = MemTable::new(None);
+        let mut mt = MemTable::new(SsTableSize::Default);
         mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(12));
         mt.insert(Bytes::from("bar"), Bytes::from("foo"), Some(24));
 
@@ -177,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_will_overflow() {
-        let mt = MemTable::new(Some(10));
+        let mt = MemTable::new(SsTableSize::Is(10));
         assert!(mt.will_overflow(11));
         assert!(!mt.will_overflow(10));
     }

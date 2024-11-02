@@ -4,6 +4,7 @@ mod sstable;
 mod wal;
 
 use crate::lsm::memtable::MemTable;
+use crate::lsm::memtable::SsTableSize;
 use crate::Responder;
 use crate::Storage;
 use bytes::Bytes;
@@ -52,7 +53,7 @@ impl<T: Storage> Engine<T> {
         Engine {
             input_rx: rx,
             storage,
-            memtable: MemTable::new(None),
+            memtable: MemTable::new(SsTableSize::Default),
             wal: wal::Wal {},
         }
     }
@@ -141,7 +142,7 @@ impl<T: Storage> Engine<T> {
     /// Swaps memtable with fresh one and sends full table to dispatcher that syncronously write it to disk.
     fn swap_table(&mut self) -> MemTable {
         // TODO: When SSTable is written WAL should be rotated.
-        let mut swapped = MemTable::new(None);
+        let mut swapped = MemTable::new(SsTableSize::Default);
         std::mem::swap(&mut self.memtable, &mut swapped);
         swapped
     }
