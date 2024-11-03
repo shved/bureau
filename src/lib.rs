@@ -14,18 +14,18 @@ pub type Responder<T> = oneshot::Sender<Result<T>>;
 pub trait Storage: Clone + Send + 'static {
     type Entry: StorageEntry;
 
-    /// Includes any setup required by storage to function. For filesystem it could be creating
+    /// Includes any setup required by storage to function. For file system it could be creating
     /// directories for data, for network blob storage it could register a bucket and so on.
     fn bootstrap(&self) -> io::Result<()>;
 
-    /// Note that uuids of sstables have to be alphabetically reverse ordered. Using UUIDs V7
+    /// Note that uuids of SsTables have to be alphabetically reverse ordered. Using UUIDs V7
     /// makes it properly work since sorting it will also order them in table creation time.
     fn list_entries(&self) -> io::Result<Vec<Uuid>>;
 
-    /// It writes a new sstable to storage.
+    /// It writes a new SsTable to storage.
     fn write(&self, table_id: &Uuid, data: &[u8]) -> io::Result<()>;
 
-    /// Opens sstable to sequentially read it later.
+    /// Opens SsTable to sequentially read it later.
     fn open(&self, table_id: &Uuid) -> io::Result<Self::Entry>;
 }
 

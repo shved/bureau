@@ -99,10 +99,10 @@ impl MemTable {
         if self.map.contains_key(key) {
             // It is fine to get value here since access is syncronized.
             let old_value = self.map.get(key).unwrap(); // unwrap() is fine here.
-            old_entry_size = block::Entry::size(key, old_value);
+            old_entry_size = block::entry_size(key, old_value);
         }
 
-        let entry_size = block::Entry::size(key, value);
+        let entry_size = block::entry_size(key, value);
 
         self.size - old_entry_size + entry_size
     }
@@ -119,7 +119,7 @@ impl MemTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsm::sstable::block::Entry;
+    use crate::lsm::sstable::block;
 
     #[test]
     fn test_is_full() {
@@ -136,21 +136,21 @@ mod tests {
         let mut mt = MemTable::new(SsTableSize::Default);
         let first_key = Bytes::from("foo");
         let first_value = Bytes::from("bar");
-        let size = Entry::size(&first_key, &first_value);
+        let size = block::entry_size(&first_key, &first_value);
         mt.insert(first_key, first_value, Some(size));
 
         let second_key = Bytes::from("language");
         let second_value = Bytes::from("rust");
         assert_eq!(
             mt.new_size(&second_key, &second_value),
-            mt.size + Entry::size(&second_key, &second_value)
+            mt.size + block::entry_size(&second_key, &second_value)
         );
 
         let dup_key = Bytes::from("foo");
         let new_value = Bytes::from("not-bar");
         assert_eq!(
             mt.new_size(&dup_key, &new_value),
-            Entry::size(&dup_key, &new_value)
+            block::entry_size(&dup_key, &new_value)
         );
     }
 

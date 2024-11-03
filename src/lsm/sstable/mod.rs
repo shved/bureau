@@ -54,7 +54,7 @@ impl SsTable {
         for (k, v) in src.map.iter() {
             if !cur_block.add(k.clone(), v.clone()) {
                 blocks.push(cur_block); // Block is full. Put it to the blocks vector.
-                cur_block = Block::new(); // Set the cursor to be a new block.
+                cur_block = Block::new(); // Replace current block with an empty one.
                 cur_block.add(k.clone(), v.clone()); // Put the value to a new block.
             }
 
@@ -140,7 +140,7 @@ impl SsTable {
     }
 
     fn read_block(blob: &impl StorageEntry, offset: u32) -> Result<Block> {
-        let mut data = vec![0; block::BLOCK_BYTESIZE];
+        let mut data = vec![0; block::BLOCK_BYTE_SIZE];
         blob.read_at(&mut data, offset as u64)?;
 
         Ok(Block::decode(&data))

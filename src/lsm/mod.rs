@@ -38,6 +38,7 @@ pub enum Command {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Engine<T: Storage> {
     input_rx: mpsc::Receiver<Command>,
     // TODO: Channel to shutdown + tokio::select! inside run loop.
