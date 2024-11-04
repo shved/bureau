@@ -15,6 +15,7 @@ pub struct Entry {
 
 /// Holds an ordered list of SSTables present on disk and ready for requests.
 impl Index {
+    // TODO: Consider renaming it to new.
     pub fn init(entries: &mut [Uuid]) -> Self {
         // Seem to be not necessary here but tables set will not be too huge and index only needs
         // to be initialized once the database starts so it's fine if we end up doing extra work.

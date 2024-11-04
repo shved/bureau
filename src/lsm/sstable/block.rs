@@ -154,11 +154,7 @@ impl Block {
     }
 
     pub fn get(&self, key: Bytes) -> Option<Bytes> {
-        assert!(
-            self.offsets.len() >= 3,
-            "Block has too few entries ({})",
-            self.offsets.len()
-        );
+        assert!(!self.is_empty(), "Attempt to get value from an empty block");
 
         let mut low = 0;
         let mut high = self.offsets.len() - 1;

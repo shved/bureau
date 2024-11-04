@@ -99,7 +99,7 @@ impl SsTable {
     pub fn lookup(blob: &impl StorageEntry, key: &Bytes) -> Result<Option<Bytes>> {
         if let (true, index_len) = Self::probe_bloom(blob, key)? {
             if let Some(offset) = Self::lookup_index(blob, index_len as usize, key)? {
-                let block = Self::read_block(blob, offset)?;
+                let block = Self::read_block(blob, index_len, offset)?;
                 return Ok(block.get(key.clone()));
             }
         }
@@ -139,8 +139,11 @@ impl SsTable {
         }
     }
 
-    fn read_block(blob: &impl StorageEntry, offset: u32) -> Result<Block> {
+    fn read_block(blob: &impl StorageEntry, index_len: u16, offset: u32) -> Result<Block> {
         let mut data = vec![0; block::BLOCK_BYTE_SIZE];
+        // Offsets are being set in index relative to Data Section start, so to get offset
+        // relative to the whole blob start we need to sum up bloom filter length and index length.
+        let offset = index_len as u32 + bloom::ENCODED_LEN as u32 + offset;
         blob.read_at(&mut data, offset as u64)?;
 
         Ok(Block::decode(&data))
@@ -249,7 +252,9 @@ mod tests {
     use bytes::Bytes;
     use rand::seq::SliceRandom;
 
-    fn create_full_memtable(size: SsTableSize) -> (MemTable, Bytes) {
+    /// Generates a full memtable that is filled with UUIDs as keys and values. Returns
+    /// a memtable and a random pair of key and value present in the table.
+    fn create_full_memtable(size: SsTableSize) -> (MemTable, Bytes, Bytes) {
         let mut mt = MemTable::new(size);
         loop {
             // Fill it with random simple uuids.
@@ -263,8 +268,10 @@ mod tests {
                     let internal_map = mt.map.clone();
                     let keys = internal_map.keys().cloned().collect::<Vec<Bytes>>();
                     let key = keys.choose(&mut rand::thread_rng()).unwrap();
+                    let value = internal_map.get(key);
+                    let value = value.unwrap();
 
-                    return (mt, key.clone());
+                    return (mt, key.clone(), value.clone());
                 }
             }
         }
@@ -272,15 +279,15 @@ mod tests {
 
     #[test]
     fn test_build() {
-        let mt = create_full_memtable(SsTableSize::Default);
-        let built = SsTable::build(mt.0);
+        let (mt, _, _) = create_full_memtable(SsTableSize::Default);
+        let built = SsTable::build(mt);
         assert_eq!(built.blocks.len(), 16);
     }
 
     #[test]
     fn test_lookup() {
-        let mt = create_full_memtable(SsTableSize::Is(8 * 1024));
-        let built = SsTable::build(mt.0);
+        let (mt, key, value) = create_full_memtable(SsTableSize::Is(8 * 1024));
+        let built = SsTable::build(mt);
         let encoded = built.encode();
 
         let stor = mem::new();
@@ -292,29 +299,29 @@ mod tests {
 
         let blob = open_res.unwrap();
 
-        // let res = SsTable::lookup(&blob, &mt.1);
-        // assert!(res.is_ok());
-        // let res = res.unwrap();
-
-        // assert!(res.is_some())
+        let res = SsTable::lookup(&blob, &key);
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert!(res.is_some());
+        assert_eq!(res.unwrap(), value);
     }
 
     #[test]
     fn test_probe_bloom_and_lookup_index() {
-        let mt = create_full_memtable(SsTableSize::Is(8 * 1024));
-        let key = &mt.1;
+        let (mt, key, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
 
-        let built = SsTable::build(mt.0);
+        let built = SsTable::build(mt);
         let encoded = built.encode();
 
-        let res = SsTable::probe_bloom(&encoded, key);
+        let res = SsTable::probe_bloom(&encoded, &key);
         assert!(res.is_ok());
         let res = res.unwrap();
         assert!(res.0);
         assert_eq!(res.1, 168);
 
-        let res = SsTable::lookup_index(&encoded, 168, key);
+        let res = SsTable::lookup_index(&encoded, 168, &key);
         assert!(res.is_ok());
+        assert!(res.unwrap().is_some());
     }
 
     fn make_test_index() -> TableIndex {
