@@ -11,6 +11,6 @@ dev.spam:
 	sh ./spam_set_requests.sh
 
 dev.clean:
-	rm dev/var/lib/bureau/*
+	rm var/lib/bureau/*
 
-.PHONY: dev.up dev.down dev.spam
+.PHONY: dev.up dev.down dev.spam dev.clean

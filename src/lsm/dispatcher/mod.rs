@@ -4,7 +4,9 @@ mod index;
 use crate::lsm::memtable::MemTable;
 use crate::lsm::sstable::SsTable;
 use crate::Responder;
+use crate::Storage;
 use bytes::Bytes;
+use index::Index;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -27,26 +29,29 @@ pub enum Command {
 /// the reads and writes will be suspended while buffer is full.
 /// Dispatcher is also managing index which is a vector of all the tables ids persisted to disk.
 #[derive(Debug)]
-pub struct Dispatcher {
+pub struct Dispatcher<T: Storage> {
     cmd_rx: mpsc::Receiver<Command>,
+    storage: T,
+    index: Index,
     sst_buf_size: usize,
     sst_buf: usize,
-    index: index::Index,
 }
 
-impl Dispatcher {
+impl<T: Storage> Dispatcher<T> {
     pub fn init(
         cmd_rx: mpsc::Receiver<Command>,
         sst_buf_size: usize,
-        data_path: String,
+        storage: T,
     ) -> std::result::Result<Self, anyhow::Error> {
-        let index = index::Index::init(data_path)?;
+        let mut entries = storage.list_entries()?;
+        let index = Index::init(&mut entries);
 
         Ok(Dispatcher {
             cmd_rx,
+            storage,
+            index,
             sst_buf_size,
             sst_buf: 0,
-            index,
         })
     }
 
@@ -55,7 +60,9 @@ impl Dispatcher {
             match cmd {
                 Command::Get { key, responder } => {
                     for entry in self.index.entries.iter() {
-                        match SsTable::lookup(&entry.id, &key) {
+                        let blob = self.storage.open(&entry.id).unwrap(); // TODO: Log error and send response to engine.
+
+                        match SsTable::lookup(&blob, &key) {
                             Ok(Some(value)) => {
                                 responder.send(Ok(Some(value))).ok();
                                 return;
@@ -76,11 +83,11 @@ impl Dispatcher {
                     self.sst_buf += 1;
                     if self.sst_buf < self.sst_buf_size {
                         responder.send(Ok(())).ok(); // If buffer isnt full ack immediately to free engine thread.
-                        let id = persist_table(data);
+                        let id = self.persist_table(data);
                         self.index.prepend(id);
                         self.sst_buf -= 1;
                     } else {
-                        let id = persist_table(data);
+                        let id = self.persist_table(data);
                         self.index.prepend(id);
                         self.sst_buf -= 1;
                         responder.send(Ok(())).ok(); // If buffer is full, ack only when the table is on disk.
@@ -92,16 +99,16 @@ impl Dispatcher {
             }
         }
     }
-}
 
-fn persist_table(data: MemTable) -> Uuid {
-    let table = SsTable::build(data);
-    let encoded_data = table.encode();
+    fn persist_table(&self, data: MemTable) -> Uuid {
+        let table = SsTable::build(data);
+        let encoded_data = table.encode();
 
-    // TODO: Actually handle when table can't be persisted.
-    table
-        .persist(&encoded_data)
-        .expect("Cant dump table to disk");
+        // TODO: Actually handle when table can't be persisted.
+        self.storage
+            .write(&table.id, &encoded_data)
+            .expect("Cant persist table");
 
-    table.id
+        table.id
+    }
 }
