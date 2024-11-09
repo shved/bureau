@@ -132,7 +132,7 @@ impl SsTable {
         let entry = index
             .0
             .into_iter()
-            .find(|e| e.first_key < key && e.last_key > key);
+            .find(|e| e.first_key <= key && e.last_key >= key);
         match entry {
             Some(IndexEntry { offset, .. }) => Ok(Some(offset)),
             None => Ok(None),
@@ -291,18 +291,22 @@ mod tests {
         let encoded = built.encode();
 
         let stor = mem::new();
-        let result = stor.write(&built.id, encoded.as_ref());
-        assert!(result.is_ok(), "persisting a table: {:?}", result.err());
+        let write = stor.write(&built.id, encoded.as_ref());
+        assert!(
+            write.is_ok(),
+            "persisting a table err: {:?}",
+            write.err().unwrap()
+        );
 
-        let open_res = stor.open(&built.id);
-        assert!(open_res.is_ok());
+        let open = stor.open(&built.id);
+        assert!(open.is_ok(), "opening blob err: {:?}", open.err().unwrap());
 
-        let blob = open_res.unwrap();
+        let blob = open.unwrap();
 
         let res = SsTable::lookup(&blob, &key);
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
         let res = res.unwrap();
-        assert!(res.is_some());
+        assert!(res.is_some(), "key should be found in table, but its not");
         assert_eq!(res.unwrap(), value);
     }
 
@@ -314,14 +318,31 @@ mod tests {
         let encoded = built.encode();
 
         let res = SsTable::probe_bloom(&encoded, &key);
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "probe bloom err: {:?}", res.err().unwrap());
         let res = res.unwrap();
         assert!(res.0);
         assert_eq!(res.1, 168);
 
         let res = SsTable::lookup_index(&encoded, 168, &key);
-        assert!(res.is_ok());
-        assert!(res.unwrap().is_some());
+        assert!(res.is_ok(), "lookup index err: {:?}", res.err().unwrap());
+        assert!(
+            res.unwrap().is_some(),
+            "key should be in index, but not found"
+        );
+    }
+
+    #[test]
+    fn test_probe_bloom() {
+        let (mt, key, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
+
+        let built = SsTable::build(mt);
+        let encoded = built.encode();
+
+        let res = SsTable::probe_bloom(&encoded, &key);
+        assert!(res.is_ok(), "probe bloom err: {:?}", res.err().unwrap());
+        let res = res.unwrap();
+        assert!(res.0);
+        assert_eq!(res.1, 168);
     }
 
     fn make_test_index() -> TableIndex {

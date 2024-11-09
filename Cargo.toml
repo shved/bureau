@@ -16,13 +16,13 @@ name = "search_in_block"
 harness = false
 
 [dependencies]
-anyhow = "1.0.92"
+anyhow = "1.0.93"
 bloomfilter = "2.0.0"
 bytes = "1.8.0"
 clap = { version = "4.5.20", features = ["derive"] }
 crc32fast = "1.4.2"
 futures = { version = "0.3.31", features = ["thread-pool"] }
-tokio = { version = "1.41.0", features = ["full", "tracing"] }
+tokio = { version = "1.41.1", features = ["full", "tracing"] }
 tokio-stream = { version = "0.1.16", features = ["full"] }
 tokio-util = { version = "0.7.12", features = ["full"] }
 tracing = "0.1.40"
@@ -33,4 +33,4 @@ uuid = { version = "1.11.0", features = ["v7"] }
 criterion = "0.5.1"
 rand = "0.8.5"
 random-string = "1.1.0"
-tempfile = "3.13.0"
+tempfile = "3.14.0"
