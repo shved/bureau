@@ -99,7 +99,7 @@ mod tests {
         assert_eq!(encoded.len(), ENCODED_LEN);
 
         let decoded = Bloom::decode(encoded.as_slice());
-        assert_eq!(decoded.bit_vec(), original.bit_vec());
+        assert_eq!(decoded.bitmap(), original.bitmap());
         assert!(decoded.check(&Bytes::from("foo")));
         assert!(decoded.check(&Bytes::from("bar")));
     }
