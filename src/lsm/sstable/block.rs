@@ -57,7 +57,7 @@ impl Block {
     pub fn add(&mut self, key: Bytes, value: Bytes) -> bool {
         let entry_size = entry_size(&key, &value);
 
-        if self.size + entry_size > BLOCK_BYTE_SIZE as u32 && !self.is_empty() {
+        if self.size + entry_size > BLOCK_BYTE_SIZE as u32 {
             return false;
         }
 
