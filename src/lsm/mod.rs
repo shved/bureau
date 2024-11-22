@@ -20,10 +20,10 @@ pub const DATA_PATH: &str = "/var/lib/bureau"; // TODO: Make configurable.
 const DISPATCHER_BUFFER_SIZE: usize = 32; // TODO: Make configurable.
 
 // TODO: Make configurable.
-const KEY_LIMIT: u32 = 512; // 512B.
+const MAX_KEY_SIZE: u32 = 512; // 512B.
 
 // TODO: Make configurable.
-const VALUE_LIMIT: u32 = 2048; // 2KB.
+const MAX_VALUE_SIZE: u32 = 2048; // 2KB.
 
 pub enum Command {
     Get {
@@ -154,7 +154,7 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
         return Err(crate::Error::from("key is empty"));
     }
 
-    if key.len() > KEY_LIMIT as usize {
+    if key.len() > MAX_KEY_SIZE as usize {
         return Err(crate::Error::from("key is too long"));
     }
 
@@ -162,7 +162,7 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
         return Err(crate::Error::from("value is empty"));
     }
 
-    if value.len() > VALUE_LIMIT as usize {
+    if value.len() > MAX_VALUE_SIZE as usize {
         return Err(crate::Error::from("value is too long"));
     }
 

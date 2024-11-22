@@ -5,7 +5,7 @@ use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 
 const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
-const MAX_ENTRY_SIZE: u32 = lsm::KEY_LIMIT + lsm::VALUE_LIMIT + block::ENTRY_OVERHEAD;
+const MAX_ENTRY_SIZE: u32 = lsm::MAX_KEY_SIZE + lsm::MAX_VALUE_SIZE + block::ENTRY_OVERHEAD;
 
 /// It's a map with ordered keys. Size keeps track of memtable size in bytes
 /// according to layout of sstable. Max size is a limit after which a table
