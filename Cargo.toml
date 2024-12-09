@@ -25,7 +25,7 @@ futures = { version = "0.3.31", features = ["thread-pool"] }
 tokio = { version = "1.41.1", features = ["full", "tracing"] }
 tokio-stream = { version = "0.1.16", features = ["full"] }
 tokio-util = { version = "0.7.12", features = ["full"] }
-tracing = "0.1.40"
+tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
 uuid = { version = "1.11.0", features = ["v7"] }
 
