@@ -26,7 +26,7 @@ tokio = { version = "1.42.0", features = ["full", "tracing"] }
 tokio-stream = { version = "0.1.16", features = ["full"] }
 tokio-util = { version = "0.7.13", features = ["full"] }
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.18", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
+tracing-subscriber = { version = "0.3.19", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
 uuid = { version = "1.11.0", features = ["v7"] }
 
 [dev-dependencies]
