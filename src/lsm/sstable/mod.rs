@@ -306,7 +306,11 @@ mod tests {
         let res = SsTable::lookup(&blob, &key);
         assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
         let res = res.unwrap();
-        assert!(res.is_some(), "key should be found in table, but its not");
+        assert!(
+            res.is_some(),
+            "key {:?} should be found in table, but its not",
+            key
+        );
         assert_eq!(res.unwrap(), value);
     }
 
@@ -327,7 +331,8 @@ mod tests {
         assert!(res.is_ok(), "lookup index err: {:?}", res.err().unwrap());
         assert!(
             res.unwrap().is_some(),
-            "key should be in index, but not found"
+            "key {:?} should be in index, but not found",
+            key,
         );
     }
 
