@@ -32,7 +32,8 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] make separate storage layer to abstract code that works with disk
 - [ ] more unit tests
 - [ ] high level test with tests/proptests.rs
-- [ ] better logging to handle threads and put logs to file
+- [ ] better logging to handle threads
+  - [ ] put logs to files
 - [ ] handle shutdown properly
 - [ ] wal
 - [ ] add workflow for testcov
