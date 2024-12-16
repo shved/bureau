@@ -129,7 +129,7 @@ impl<T: Storage> Engine<T> {
         }
     }
 
-    /// It only checks hot spots: cache, memtable, shadow table.
+    /// It only checks hot spots: cache, memtable.
     fn get_from_mem(&self, key: &Bytes) -> Option<Bytes> {
         // TODO: First search cache.
 
