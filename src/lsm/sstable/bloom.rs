@@ -4,9 +4,9 @@ use std::io::Cursor;
 
 pub const MAX_ELEM: usize = 6400;
 pub const PROBABILITY: f64 = 0.01;
+pub const BLOOM_SIZE: usize = 7714; // 7714B.
 pub const CHECKSUM_SIZE: usize = 4; // 4B.
-pub const BLOOM_SIZE: usize = 7713; // 7713B.
-pub const ENCODED_LEN: usize = BLOOM_SIZE + CHECKSUM_SIZE; // 7717B.
+pub const ENCODED_LEN: usize = BLOOM_SIZE + CHECKSUM_SIZE; // 7718B.
 
 pub trait BloomSerializable {
     fn encode(&self) -> Vec<u8>;
@@ -15,38 +15,22 @@ pub trait BloomSerializable {
 
 /*
 Bloom filter layout schema.
-----------------------------------------------------------------------------------
-| Number of bits |  K num   |         Sip Keys         |    Bitmap    | Checksum |
-----------------------------------------------------------------------------------
-|      u64       | u32 (4B) | [(u64, u64), (u64, u64)] | 101001010... | u32 (4B) |
-----------------------------------------------------------------------------------
+----------------------------------------------
+| Bloomfilter serialized to bytes | Checksum |
+----------------------------------------------
+|              7714B              | u32 (4B) |
+----------------------------------------------
 */
 impl BloomSerializable for Bloom<Bytes> {
     fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(BLOOM_SIZE + CHECKSUM_SIZE);
+        let mut encoded = self.to_bytes();
 
-        // Bitmap bits parameter. Number of bits.
-        buf.put_u64(self.number_of_bits());
+        let checksum = crc32fast::hash(&encoded);
+        encoded.put_u32(checksum);
 
-        // K num.
-        buf.put_u32(self.number_of_hash_functions());
+        assert_eq!(encoded.len(), BLOOM_SIZE + CHECKSUM_SIZE);
 
-        // Sip keys.
-        let sip_keys = self.sip_keys();
-        buf.put_u64(sip_keys[0].0);
-        buf.put_u64(sip_keys[0].1);
-        buf.put_u64(sip_keys[1].0);
-        buf.put_u64(sip_keys[1].1);
-
-        // Bitmap itself.
-        buf.put(self.bitmap().as_ref());
-
-        let checksum = crc32fast::hash(&buf[..buf.capacity() - CHECKSUM_SIZE]);
-        buf.put_u32(checksum);
-
-        assert_eq!(buf.capacity(), BLOOM_SIZE + CHECKSUM_SIZE);
-
-        buf
+        encoded
     }
 
     // TODO: Remove panics, return Result.
@@ -59,30 +43,26 @@ impl BloomSerializable for Bloom<Bytes> {
             raw.len()
         );
 
-        let mut buf = Cursor::new(raw);
         let checksum = crc32fast::hash(&raw[..BLOOM_SIZE]);
 
-        let bitmap_bits = buf.get_u64();
-        let k_num = buf.get_u32();
-        let sip_keys = [
-            (buf.get_u64(), buf.get_u64()),
-            (buf.get_u64(), buf.get_u64()),
-        ];
-        let bitmap = buf.copy_to_bytes(buf.remaining() - CHECKSUM_SIZE);
+        let mut vec = Vec::from(raw);
 
-        let checksum_decoded = buf.get_u32();
+        let sum_vec: Vec<u8> = vec.drain(BLOOM_SIZE..).collect();
+        let sum_decoded = Cursor::new(sum_vec).get_u32();
+
+        let decoded = Bloom::<Bytes>::from_bytes(vec).unwrap();
 
         assert_eq!(
-            checksum, checksum_decoded,
+            checksum, sum_decoded,
             "Checksum mismatch in bloom filter decode"
         );
 
-        Self::from_existing(bitmap.as_ref(), bitmap_bits, k_num, sip_keys)
+        decoded
     }
 }
 
 pub fn new() -> Bloom<Bytes> {
-    Bloom::new_for_fp_rate(MAX_ELEM, PROBABILITY)
+    Bloom::new_for_fp_rate(MAX_ELEM, PROBABILITY).unwrap()
 }
 
 #[cfg(test)]
@@ -99,7 +79,6 @@ mod tests {
         assert_eq!(encoded.len(), ENCODED_LEN);
 
         let decoded = Bloom::decode(encoded.as_slice());
-        assert_eq!(decoded.bitmap(), original.bitmap());
         assert!(decoded.check(&Bytes::from("foo")));
         assert!(decoded.check(&Bytes::from("bar")));
     }
