@@ -1,4 +1,5 @@
 use bytes::{Buf, BufMut, Bytes};
+use std::ascii::AsciiExt;
 use std::io::Cursor;
 
 /*
@@ -190,6 +191,18 @@ impl Block {
 
 pub fn entry_size(key: &Bytes, value: &Bytes) -> u32 {
     key.len() as u32 + value.len() as u32 + ENTRY_OVERHEAD
+}
+
+impl std::fmt::Display for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let mut keys = Vec::<String>::new();
+        for offset in self.offsets.clone() {
+            let frame = self.parse_frame(offset as usize);
+            keys.push(String::from_utf8_lossy(&frame).into_owned());
+        }
+
+        write!(f, "block keys: {:?}", keys)
+    }
 }
 
 #[cfg(test)]
