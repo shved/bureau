@@ -44,6 +44,17 @@ impl MemTable {
         }
     }
 
+    pub fn keys(&self) -> Vec<String> {
+        let keys: Vec<String> = self
+            .map
+            .keys()
+            .cloned()
+            .map(|b| String::from_utf8(b.to_vec()).unwrap())
+            .collect();
+
+        keys
+    }
+
     pub fn from_wal(_wal: Wal) -> MemTable {
         todo!();
     }
