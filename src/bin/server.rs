@@ -95,7 +95,16 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
                 return Response::Error { msg: e.to_string() };
             }
 
-            let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
+            let resp = resp_rx.await;
+
+            // TODO: Log error instead of sending it to client;
+            if resp.is_err() {
+                return Response::Error {
+                    msg: resp.err().unwrap().to_string(),
+                };
+            }
+
+            let resp = resp.unwrap();
 
             match resp {
                 Ok(option) => match option {

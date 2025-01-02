@@ -1,7 +1,7 @@
 #!/bin/bash
 
 for ((i = 0; i < 400; ++i)); do
-  chars='1234567890_-/%#@!$^&*()+=~`|[]{}abcdefghigklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  chars='1234567890_-#@^&*+=~abcdefghigklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
   n=100
 
   key=""
