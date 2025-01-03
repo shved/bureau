@@ -37,48 +37,66 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
     let stor = storage::new(DataPath::Default);
     let engine = Engine::new(req_rx, stor);
 
-    tokio::spawn(engine.run());
+    let engine_handle = tokio::spawn(async move {
+        engine.run().await;
+        tracing::error!("engine exited");
+    });
 
-    loop {
-        let req_tx = req_tx.clone();
+    let network_loop_handle = tokio::spawn(async move {
+        loop {
+            let req_tx = req_tx.clone();
 
-        match listener.accept().await {
-            Ok((socket, _)) => {
-                tokio::spawn(async move {
-                    let mut lines = Framed::new(socket, LinesCodec::new());
+            match listener.accept().await {
+                Ok((socket, _)) => {
+                    tokio::spawn(async move {
+                        let mut lines = Framed::new(socket, LinesCodec::new());
 
-                    if let Some(result) = lines.next().await {
-                        match result {
-                            Ok(line) => match Request::parse(&line) {
-                                Ok(request) => {
-                                    let response = handle_request(request, req_tx).await;
-                                    let serialized = response.serialize();
+                        if let Some(result) = lines.next().await {
+                            match result {
+                                Ok(line) => match Request::parse(&line) {
+                                    Ok(request) => {
+                                        let response = handle_request(request, req_tx).await;
+                                        let serialized = response.serialize();
 
-                                    if let Err(e) = lines.send(serialized.as_str()).await {
-                                        warn!("error on sending response; error = {:?}", e);
+                                        if let Err(e) = lines.send(&serialized).await {
+                                            warn!("error on sending response; error = {:?}", e);
+                                        }
                                     }
-                                }
+                                    Err(e) => {
+                                        let response = Response::Error {
+                                            msg: format!("could not parse command: {}", e),
+                                        };
+                                        let serialized = response.serialize();
+
+                                        if let Err(e) = lines.send(serialized.as_str()).await {
+                                            warn!("error on sending response; error = {:?}", e);
+                                        }
+                                    }
+                                },
                                 Err(e) => {
-                                    let response = Response::Error {
-                                        msg: format!("could not parse command: {}", e),
-                                    };
-                                    let serialized = response.serialize();
-
-                                    if let Err(e) = lines.send(serialized.as_str()).await {
-                                        warn!("error on sending response; error = {:?}", e);
-                                    }
+                                    error!("error on decoding from socket; error = {:?}", e);
                                 }
-                            },
-                            Err(e) => {
-                                error!("error on decoding from socket; error = {:?}", e);
                             }
                         }
-                    }
-                });
+                    });
+                }
+                Err(e) => error!("error accepting socket; error = {:?}", e),
             }
-            Err(e) => error!("error accepting socket; error = {:?}", e),
         }
-    }
+    });
+
+    tokio::select! {
+        res = engine_handle => {
+            tracing::error!("engine handle down: {res:?}");
+            res?;
+        },
+        res = network_loop_handle => {
+            tracing::error!("network loop down: {res:?}");
+            res?;
+        }
+    };
+
+    Ok(())
 }
 
 async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Response {

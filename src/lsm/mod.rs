@@ -71,7 +71,13 @@ impl<T: Storage> Engine<T> {
         let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, self.storage.clone())
             .unwrap_or_else(|e| panic!("Could not initialize dispatcher: {}", e));
 
-        tokio::spawn(disp.run());
+        let join_handle = tokio::spawn(async move {
+            disp.run().await;
+            tracing::error!("dispatched exited");
+        });
+        tokio::spawn(async move {
+            tracing::error!("dispatched exit: {:?}", join_handle.await);
+        });
 
         // TODO: Change it to select! here to handle shutdown.
         while let Some(cmd) = self.input_rx.recv().await {

@@ -59,25 +59,26 @@ impl<T: Storage> Dispatcher<T> {
         while let Some(cmd) = self.cmd_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
+                    let mut response: Result<Option<Bytes>, _> = Ok(None);
                     for entry in self.index.entries.iter() {
                         let blob = self.storage.open(&entry.id).unwrap(); // TODO: Log error and send response to engine.
 
                         match SsTable::lookup(&blob, &key) {
                             Ok(Some(value)) => {
-                                responder.send(Ok(Some(value))).ok();
-                                return;
+                                response = Ok(Some(value));
+                                break;
                             }
                             Ok(None) => {
                                 continue;
                             }
                             Err(e) => {
-                                responder.send(Err(e)).ok();
-                                return;
+                                response = Err(e);
+                                break;
                             }
                         }
                     }
 
-                    responder.send(Ok(None)).ok();
+                    responder.send(response).ok();
                 }
                 Command::CreateTable { data, responder } => {
                     self.sst_buf += 1;
