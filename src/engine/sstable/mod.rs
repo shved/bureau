@@ -1,7 +1,7 @@
 pub mod block;
 pub mod bloom;
 
-use crate::lsm::memtable::MemTable;
+use crate::engine::memtable::MemTable;
 use crate::Result;
 use crate::StorageEntry;
 use block::Block;
@@ -246,7 +246,7 @@ impl TableIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsm::memtable::{MemTable, ProbeResult, SsTableSize};
+    use crate::engine::memtable::{MemTable, ProbeResult, SsTableSize};
     use crate::storage::mem;
     use crate::Storage;
     use bytes::Bytes;

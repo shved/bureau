@@ -1,4 +1,4 @@
-use bureau::lsm::{Command, Engine};
+use bureau::engine::{Command, Engine};
 use bureau::storage;
 use bureau::storage::DataPath;
 use bytes::Bytes;

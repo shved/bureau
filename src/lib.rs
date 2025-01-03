@@ -1,4 +1,4 @@
-pub mod lsm;
+pub mod engine;
 pub mod storage;
 
 use std::io;

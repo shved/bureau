@@ -1,11 +1,11 @@
-use crate::lsm;
-use crate::lsm::sstable::block;
-use crate::lsm::wal::Wal;
+use crate::engine;
+use crate::engine::sstable::block;
+use crate::engine::wal::Wal;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 
 const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
-const MAX_ENTRY_SIZE: u32 = lsm::MAX_KEY_SIZE + lsm::MAX_VALUE_SIZE + block::ENTRY_OVERHEAD;
+const MAX_ENTRY_SIZE: u32 = engine::MAX_KEY_SIZE + engine::MAX_VALUE_SIZE + block::ENTRY_OVERHEAD;
 
 /// It's a map with ordered keys. Size keeps track of memtable size in bytes
 /// according to layout of sstable. Max size is a limit after which a table
@@ -119,7 +119,7 @@ impl MemTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsm::sstable::block;
+    use crate::engine::sstable::block;
 
     #[test]
     fn test_is_full() {

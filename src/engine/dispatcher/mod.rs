@@ -1,8 +1,8 @@
 mod compaction;
 mod index;
 
-use crate::lsm::memtable::MemTable;
-use crate::lsm::sstable::SsTable;
+use crate::engine::memtable::MemTable;
+use crate::engine::sstable::SsTable;
 use crate::Responder;
 use crate::Storage;
 use bytes::Bytes;

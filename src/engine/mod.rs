@@ -3,8 +3,8 @@ pub mod memtable;
 mod sstable;
 mod wal;
 
-use crate::lsm::memtable::MemTable;
-use crate::lsm::memtable::SsTableSize;
+use crate::engine::memtable::MemTable;
+use crate::engine::memtable::SsTableSize;
 use crate::Responder;
 use crate::Storage;
 use bytes::Bytes;
