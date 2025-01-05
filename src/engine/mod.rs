@@ -198,7 +198,7 @@ mod tests {
         const MSG_LENGTH: usize = 100;
 
         // Make just enough entries to create an sstable and 10 additional entries.
-        let entries_count: usize = memtable::SSTABLE_BYTESIZE as usize / MSG_LENGTH * 2 + 10;
+        let entries_count: usize = memtable::SSTABLE_BYTESIZE as usize / (MSG_LENGTH * 2) + 10;
 
         // Generate and populate entries.
         let mut entries: Vec<(Bytes, Bytes)> = vec![];
@@ -223,6 +223,8 @@ mod tests {
                 .is_ok());
         }
 
+        let entries_total = entries.len();
+        let mut values: Vec<Option<Bytes>> = vec![];
         for entry in entries {
             let (resp_tx, resp_rx) = oneshot::channel();
 
@@ -237,9 +239,16 @@ mod tests {
             assert!(resp.is_ok(), "could not read response from channel");
             let resp = resp.unwrap();
             assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
-            // let resp = resp.unwrap();
-            // assert!(resp.is_some());
+
+            values.push(resp.unwrap());
         }
+
+        let nones = values.iter().filter(|&v| v.is_none()).count();
+        assert_eq!(
+            nones, 0,
+            "there are {} values missing out of {}",
+            nones, entries_total,
+        );
     }
 
     #[test]
