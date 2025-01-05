@@ -39,21 +39,19 @@ pub enum Command {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct Engine<T: Storage> {
+pub struct Engine {
     input_rx: mpsc::Receiver<Command>,
     // TODO: Channel to shutdown + tokio::select! inside run loop.
     // shutdown_rx: mpsc::Receiver<Command>,
-    storage: T,
     memtable: MemTable,
     wal: wal::Wal,
 }
 
 /// Engine is a working horse of the database. It holds memtable and a channel to communicate commands to.
-impl<T: Storage> Engine<T> {
-    pub fn new(rx: mpsc::Receiver<Command>, storage: T) -> Self {
+impl Engine {
+    pub fn new(rx: mpsc::Receiver<Command>) -> Self {
         Engine {
             input_rx: rx,
-            storage,
             memtable: MemTable::new(SsTableSize::Default),
             wal: wal::Wal {},
         }
@@ -62,13 +60,13 @@ impl<T: Storage> Engine<T> {
     /// This function is to run in the background thread, to read and handle commands from
     /// the channel. It itself also spawns a dispathcher thread that works with everything
     /// living on the disk a syncronized way.
-    pub async fn run(mut self) {
-        self.storage
+    pub async fn run<T: Storage>(mut self, storage: T) {
+        storage
             .bootstrap()
             .unwrap_or_else(|e| panic!("Could not setup storage: {}", e));
 
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
-        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, self.storage.clone())
+        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage)
             .unwrap_or_else(|e| panic!("Could not initialize dispatcher: {}", e));
 
         let join_handle = tokio::spawn(async move {

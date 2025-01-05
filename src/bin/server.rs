@@ -35,10 +35,10 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
 
     let (req_tx, req_rx) = mpsc::channel(64);
     let stor = storage::new(DataPath::Default);
-    let engine = Engine::new(req_rx, stor);
+    let engine = Engine::new(req_rx);
 
     let engine_handle = tokio::spawn(async move {
-        engine.run().await;
+        engine.run(stor).await;
         tracing::error!("engine exited");
     });
 
