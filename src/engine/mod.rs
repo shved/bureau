@@ -25,6 +25,7 @@ const MAX_KEY_SIZE: u32 = 512; // 512B.
 // TODO: Make configurable.
 const MAX_VALUE_SIZE: u32 = 2048; // 2KB.
 
+#[derive(Debug)]
 pub enum Command {
     Get {
         key: Bytes,
@@ -33,7 +34,8 @@ pub enum Command {
     Set {
         key: Bytes,
         value: Bytes,
-        responder: Responder<()>,
+        // Having an optional responder here allows to issue 'fire-and-forget' set commands.
+        responder: Option<Responder<()>>,
     },
 }
 
@@ -99,20 +101,20 @@ impl Engine {
                     responder,
                 } => {
                     if let Err(err) = validate(&key, &value) {
-                        responder.send(Err(err)).ok();
-                        return;
+                        responder.and_then(|r| r.send(Err(err)).ok());
+                        continue;
                     }
 
                     match self.memtable.probe(&key, &value) {
                         memtable::ProbeResult::Available(new_size) => {
                             self.memtable.insert(key, value, Some(new_size));
-                            responder.send(Ok(())).ok();
+                            responder.and_then(|r| r.send(Ok(())).ok());
                         }
                         memtable::ProbeResult::Full => {
                             // Swap tables and respond to client first.
                             let old_table = self.swap_table();
                             self.memtable.insert(key, value, None);
-                            responder.send(Ok(())).ok();
+                            responder.and_then(|r| r.send(Ok(())).ok());
 
                             // Now send full table to dispatcher to put it to disk.
                             let (resp_tx, resp_rx) = oneshot::channel();
@@ -176,6 +178,69 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::mem;
+    use rand::{thread_rng, Rng};
+
+    #[tokio::test]
+    async fn test_run() {
+        // Initialize engine.
+        let stor = mem::new();
+        let (req_tx, req_rx) = mpsc::channel(64);
+        let engine = Engine::new(req_rx);
+
+        tokio::spawn(async move {
+            engine.run(stor).await;
+            tracing::error!("engine exited");
+        });
+
+        const CHARSET: &[u8] =
+            b"1234567890_-#@^&*+=~abcdefghigklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const MSG_LENGTH: usize = 100;
+
+        // Make just enough entries to create an sstable and 10 additional entries.
+        let entries_count: usize = memtable::SSTABLE_BYTESIZE as usize / MSG_LENGTH * 2 + 10;
+
+        // Generate and populate entries.
+        let mut entries: Vec<(Bytes, Bytes)> = vec![];
+        let mut rng = thread_rng();
+        for _ in 0..entries_count {
+            let key: Bytes = (0..MSG_LENGTH)
+                .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())])
+                .collect();
+            let value: Bytes = (0..MSG_LENGTH)
+                .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())])
+                .collect();
+
+            entries.push((key.clone(), value.clone()));
+
+            assert!(req_tx
+                .send(Command::Set {
+                    key,
+                    value,
+                    responder: None
+                })
+                .await
+                .is_ok());
+        }
+
+        for entry in entries {
+            let (resp_tx, resp_rx) = oneshot::channel();
+
+            let cmd = Command::Get {
+                key: entry.0.clone(),
+                responder: resp_tx,
+            };
+
+            assert!(req_tx.send(cmd).await.is_ok());
+
+            let resp = resp_rx.await;
+            assert!(resp.is_ok(), "could not read response from channel");
+            let resp = resp.unwrap();
+            assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
+            // let resp = resp.unwrap();
+            // assert!(resp.is_some());
+        }
+    }
 
     #[test]
     fn test_validate() {

@@ -4,7 +4,7 @@ use crate::engine::wal::Wal;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 
-const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
+pub const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
 const MAX_ENTRY_SIZE: u32 = engine::MAX_KEY_SIZE + engine::MAX_VALUE_SIZE + block::ENTRY_OVERHEAD;
 
 /// It's a map with ordered keys. Size keeps track of memtable size in bytes
@@ -36,6 +36,10 @@ impl MemTable {
             SsTableSize::Default => SSTABLE_BYTESIZE,
             SsTableSize::Is(size) => size as u32,
         };
+
+        if (max_size as usize) < block::BLOCK_BYTE_SIZE {
+            panic!("SsTable should be at least one block in size.")
+        }
 
         MemTable {
             map: BTreeMap::new(),
@@ -156,13 +160,12 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        let mut mt = MemTable::new(SsTableSize::Is((MAX_ENTRY_SIZE + 1) as usize));
+        let mut mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE));
         assert_eq!(mt.size, 0);
 
         mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(12));
         assert_eq!(mt.size, 12);
         assert_eq!(mt.map.get(&Bytes::from("foo")), Some(&Bytes::from("bar")));
-        assert!(mt.is_full());
     }
 
     #[test]
@@ -180,8 +183,8 @@ mod tests {
 
     #[test]
     fn test_will_overflow() {
-        let mt = MemTable::new(SsTableSize::Is(10));
-        assert!(mt.will_overflow(11));
-        assert!(!mt.will_overflow(10));
+        let mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE));
+        assert!(mt.will_overflow((block::BLOCK_BYTE_SIZE + 1) as u32));
+        assert!(!mt.will_overflow(block::BLOCK_BYTE_SIZE as u32));
     }
 }

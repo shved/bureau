@@ -143,7 +143,7 @@ async fn handle_request(request: Request, req_tx: mpsc::Sender<Command>) -> Resp
             let cmd = Command::Set {
                 key: Bytes::from(key.clone()),
                 value: Bytes::from(value.clone()),
-                responder: resp_tx,
+                responder: Some(resp_tx),
             };
 
             if let Err(e) = req_tx.send(cmd).await {
