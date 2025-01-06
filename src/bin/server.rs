@@ -1,6 +1,5 @@
 use bureau::engine::{Command, Engine};
-use bureau::storage;
-use bureau::storage::DataPath;
+use bureau::{storage, storage::DataPath};
 use bytes::Bytes;
 use futures::SinkExt;
 use std::env;
@@ -10,6 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{error, info, warn};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 enum Request {
     Get { key: String },
@@ -24,8 +24,12 @@ enum Response {
 
 #[tokio::main]
 async fn main() -> bureau::Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt::init();
     // TODO: Assemble config from env here.
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env())
+        .with(fmt::Layer::default())
+        .init();
+
     let addr = env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:12650".to_string());

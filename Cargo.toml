@@ -33,3 +33,4 @@ uuid = { version = "1.11.0", features = ["v7"] }
 criterion = "0.5.1"
 rand = "0.8.5"
 random-string = "1.1.0"
+tracing-test = "0.2.5"

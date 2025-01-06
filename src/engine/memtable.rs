@@ -118,6 +118,18 @@ impl MemTable {
 
         false
     }
+
+    // Function exists for debug purposes to list all the keys in block.
+    pub fn keys(&self) -> Vec<String> {
+        let keys: Vec<String> = self
+            .map
+            .keys()
+            .cloned()
+            .map(|b| String::from_utf8(b.to_vec()).unwrap())
+            .collect();
+
+        keys
+    }
 }
 
 #[cfg(test)]

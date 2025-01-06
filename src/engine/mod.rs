@@ -180,7 +180,10 @@ mod tests {
     use super::*;
     use crate::storage::mem;
     use rand::{thread_rng, Rng};
+    use tracing::debug;
+    use tracing_test::traced_test;
 
+    #[traced_test]
     #[tokio::test]
     async fn test_run() {
         // Initialize engine.
@@ -224,7 +227,9 @@ mod tests {
         }
 
         let entries_total = entries.len();
-        let mut values: Vec<Option<Bytes>> = vec![];
+        let all_keys: Vec<Bytes> = entries.clone().into_iter().map(|(key, _)| key).collect();
+
+        let mut values: Vec<(Bytes, Option<Bytes>)> = vec![];
         for entry in entries {
             let (resp_tx, resp_rx) = oneshot::channel();
 
@@ -240,14 +245,28 @@ mod tests {
             let resp = resp.unwrap();
             assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
 
-            values.push(resp.unwrap());
+            values.push((entry.0, resp.unwrap()));
         }
 
-        let nones = values.iter().filter(|&v| v.is_none()).count();
-        assert_eq!(
-            nones, 0,
+        let nones: Vec<Bytes> = values
+            .clone()
+            .into_iter()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key)
+            .collect();
+
+        // DEBUG
+        if !nones.is_empty() {
+            debug!("all keys: {:?}", all_keys);
+            debug!("missing keys: {:?}", nones);
+        }
+        // END DEBUG
+
+        assert!(
+            nones.is_empty(),
             "there are {} values missing out of {}",
-            nones, entries_total,
+            nones.len(),
+            entries_total,
         );
     }
 

@@ -183,8 +183,20 @@ impl Block {
         Bytes::copy_from_slice(&self.data[offset + 2..offset + 2 + len])
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.offsets.len() < 3
+    }
+}
+
+impl std::fmt::Display for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let mut keys = Vec::<String>::new();
+        for offset in self.offsets.clone() {
+            let frame = self.parse_frame(offset as usize);
+            keys.push(String::from_utf8_lossy(&frame).into_owned());
+        }
+
+        write!(f, "block keys: {:?}", keys)
     }
 }
 
