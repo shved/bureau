@@ -59,7 +59,9 @@ impl<T: Storage> Dispatcher<T> {
         while let Some(cmd) = self.cmd_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
+                    // Defaults to Ok(None) which will be returned if none was found after all tables are checked.
                     let mut response: Result<Option<Bytes>, _> = Ok(None);
+
                     for entry in self.index.entries.iter() {
                         let blob = self.storage.open(&entry.id).unwrap(); // TODO: Log error and send response to engine.
 
@@ -69,6 +71,7 @@ impl<T: Storage> Dispatcher<T> {
                                 break;
                             }
                             Ok(None) => {
+                                // Go check the next table.
                                 continue;
                             }
                             Err(e) => {
