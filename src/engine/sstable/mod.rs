@@ -61,6 +61,8 @@ impl SsTable {
             bf.set(k);
         }
 
+        blocks.push(cur_block); // Finalize with the last block to add.
+
         Self {
             id: Self::generate_id(),
             blocks,

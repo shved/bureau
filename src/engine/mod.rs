@@ -523,84 +523,84 @@ mod tests {
         "~ykRZ9_I3_2mvl&yS8grf#r8hvf_vrUw9RlhA4EgTkYisn+xg#Ii=FYu8fNWuRkYCJGp4SF8_2MZnLkolBMOPog~SPk_Q2v*Os7*",
     ];
 
-    // #[traced_test]
-    // #[tokio::test]
-    // async fn test_run_random() {
-    //     // Initialize engine.
-    //     let stor = mem::new();
-    //     let (req_tx, req_rx) = mpsc::channel(64);
-    //     let engine = Engine::new(req_rx);
+    #[traced_test]
+    #[tokio::test]
+    async fn test_run_random() {
+        // Initialize engine.
+        let stor = mem::new();
+        let (req_tx, req_rx) = mpsc::channel(64);
+        let engine = Engine::new(req_rx);
 
-    //     tokio::spawn(async move {
-    //         engine.run(stor).await;
-    //         tracing::error!("engine exited");
-    //     });
+        tokio::spawn(async move {
+            engine.run(stor).await;
+            tracing::error!("engine exited");
+        });
 
-    //     const CHARSET: &[u8] =
-    //         b"1234567890_-#@^&*+=~abcdefghigklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    //     const MSG_LENGTH: usize = 100;
+        const CHARSET: &[u8] =
+            b"1234567890_-#@^&*+=~abcdefghigklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const MSG_LENGTH: usize = 100;
 
-    //     // Make just enough entries to create 3 sstables and 10 additional entries.
-    //     let entries_count: usize =
-    //         (memtable::SSTABLE_BYTESIZE as usize / (MSG_LENGTH * 2) * 3) + 10;
+        // Make just enough entries to create 3 sstables and 10 additional entries.
+        let entries_count: usize =
+            (memtable::SSTABLE_BYTESIZE as usize / (MSG_LENGTH * 2) * 3) + 10;
 
-    //     // Generate and populate entries.
-    //     let mut entries: Vec<Bytes> = vec![];
-    //     let mut rng = thread_rng();
-    //     for _ in 0..entries_count {
-    //         let key: Bytes = (0..MSG_LENGTH)
-    //             .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())])
-    //             .collect();
-    //         let value = key.clone();
+        // Generate and populate entries.
+        let mut entries: Vec<Bytes> = vec![];
+        let mut rng = thread_rng();
+        for _ in 0..entries_count {
+            let key: Bytes = (0..MSG_LENGTH)
+                .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())])
+                .collect();
+            let value = key.clone();
 
-    //         entries.push(key.clone());
+            entries.push(key.clone());
 
-    //         assert!(req_tx
-    //             .send(Command::Set {
-    //                 key,
-    //                 value,
-    //                 responder: None
-    //             })
-    //             .await
-    //             .is_ok());
-    //     }
+            assert!(req_tx
+                .send(Command::Set {
+                    key,
+                    value,
+                    responder: None
+                })
+                .await
+                .is_ok());
+        }
 
-    //     let mut nones: Vec<Bytes> = vec![];
-    //     for entry in entries.clone() {
-    //         let (resp_tx, resp_rx) = oneshot::channel();
+        let mut nones: Vec<Bytes> = vec![];
+        for entry in entries.clone() {
+            let (resp_tx, resp_rx) = oneshot::channel();
 
-    //         let cmd = Command::Get {
-    //             key: entry.clone(),
-    //             responder: resp_tx,
-    //         };
+            let cmd = Command::Get {
+                key: entry.clone(),
+                responder: resp_tx,
+            };
 
-    //         assert!(req_tx.send(cmd).await.is_ok());
+            assert!(req_tx.send(cmd).await.is_ok());
 
-    //         let resp = resp_rx.await;
-    //         assert!(resp.is_ok(), "could not read response from channel");
-    //         let resp = resp.unwrap();
-    //         assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
+            let resp = resp_rx.await;
+            assert!(resp.is_ok(), "could not read response from channel");
+            let resp = resp.unwrap();
+            assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
 
-    //         let resp = resp.unwrap();
-    //         if resp.is_none() {
-    //             nones.push(entry);
-    //         }
-    //     }
+            let resp = resp.unwrap();
+            if resp.is_none() {
+                nones.push(entry);
+            }
+        }
 
-    //     // DEBUG
-    //     if !nones.is_empty() {
-    //         debug!("all keys: {:?}", entries);
-    //         debug!("missing keys: {:?}", nones);
-    //     }
-    //     // END DEBUG
+        // DEBUG
+        if !nones.is_empty() {
+            debug!("all keys: {:?}", entries);
+            debug!("missing keys: {:?}", nones);
+        }
+        // END DEBUG
 
-    //     assert!(
-    //         nones.is_empty(),
-    //         "there are {} values missing out of {}",
-    //         nones.len(),
-    //         entries.len(),
-    //     );
-    // }
+        assert!(
+            nones.is_empty(),
+            "there are {} values missing out of {}",
+            nones.len(),
+            entries.len(),
+        );
+    }
 
     #[traced_test]
     #[tokio::test]
