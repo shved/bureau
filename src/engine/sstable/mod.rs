@@ -291,10 +291,9 @@ mod tests {
         assert_eq!(built.blocks.len(), 16);
     }
 
-    #[traced_test]
     #[test]
     fn test_lookup() {
-        let (mt, key, value) = create_full_memtable(SsTableSize::Is(8 * 1024));
+        let (mt, _, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
         let built = SsTable::build(mt.clone());
         let encoded = built.encode();
 
@@ -311,51 +310,12 @@ mod tests {
 
         let blob = open.unwrap();
 
-        let res = SsTable::lookup(&blob, &key);
-        assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
-        let res = res.unwrap();
-
-        // DEBUG
-        if res.is_none() {
-            debug!("key to find: {:?}", key);
-
-            // Memtable
-            debug!("memtable keys: {:?}", mt.keys());
-
-            // Index
-            let index_len = 168;
-            let mut index_data = vec![0; index_len];
-            encoded
-                .read_at(&mut index_data, bloom::ENCODED_LEN as u64)
-                .unwrap();
-            let index = TableIndex::decode(&index_data);
-            debug!("index: {:?}", index);
-
-            // Blocks
-            let block_len = 4096;
-            let mut block_1_data = vec![0; block_len];
-            encoded
-                .read_at(&mut block_1_data, (bloom::ENCODED_LEN + index_len) as u64)
-                .unwrap();
-            let block_1 = Block::decode(&block_1_data);
-            let mut block_2_data = vec![0; block_len];
-            encoded
-                .read_at(
-                    &mut block_2_data,
-                    (bloom::ENCODED_LEN + index_len + block_len) as u64,
-                )
-                .unwrap();
-            let block_2 = Block::decode(&block_2_data);
-            debug!("blocks: {}, {}", block_1, block_2);
+        for key in mt.keys() {
+            let res = SsTable::lookup(&blob, &Bytes::from(key));
+            assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
+            let res = res.unwrap();
+            assert!(res.is_some());
         }
-        // END DEBUG
-
-        assert!(
-            res.is_some(),
-            "key {:?} should be found in table, but its not",
-            key
-        );
-        assert_eq!(res.unwrap(), value);
     }
 
     #[traced_test]

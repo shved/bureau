@@ -31,7 +31,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] make CI setup with clippy, tests, and other things
 - [x] rework memtable insert to probe size first
 - [x] make separate storage layer to abstract code that works with disk
-- [ ] more unit tests
+- [x] more unit tests
 - [ ] high level test with tests/proptests.rs
 - [ ] better logging to handle threads
   - [ ] put logs to files
