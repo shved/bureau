@@ -179,7 +179,7 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
 mod tests {
     use super::*;
     use crate::storage::mem;
-    use rand::{thread_rng, Rng};
+    use rand::{rngs::ThreadRng, thread_rng, Rng};
     use tracing::debug;
     use tracing_test::traced_test;
 
@@ -525,109 +525,6 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn test_run_random_generated() {
-        // Initialize engine.
-        let stor = mem::new();
-        let (req_tx, req_rx) = mpsc::channel(64);
-        let engine = Engine::new(req_rx);
-
-        tokio::spawn(async move {
-            engine.run(stor).await;
-            tracing::error!("engine exited");
-        });
-
-        const CHARSET: &[u8] =
-            b"1234567890_-#@^&*+=~abcdefghigklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        const MSG_LENGTH: usize = 100;
-
-        // Make just enough entries to create 3 sstables and 10 additional entries.
-        let entries_count: usize =
-            (memtable::SSTABLE_BYTESIZE as usize / (MSG_LENGTH * 2) * 3) + 10;
-
-        // Generate and populate entries.
-        let mut entries: Vec<Bytes> = vec![];
-        let mut rng = thread_rng();
-        for _ in 0..entries_count {
-            let key: Bytes = (0..MSG_LENGTH)
-                .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())])
-                .collect();
-            let value = key.clone();
-
-            entries.push(key.clone());
-
-            assert!(req_tx
-                .send(Command::Set {
-                    key,
-                    value,
-                    responder: None
-                })
-                .await
-                .is_ok());
-        }
-
-        let mut nones: Vec<Bytes> = vec![];
-        for entry in entries.clone() {
-            let (resp_tx, resp_rx) = oneshot::channel();
-
-            let cmd = Command::Get {
-                key: entry.clone(),
-                responder: resp_tx,
-            };
-
-            assert!(req_tx.send(cmd).await.is_ok());
-
-            let resp = resp_rx.await;
-            assert!(resp.is_ok(), "could not read response from channel");
-            let resp = resp.unwrap();
-            assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
-
-            let resp = resp.unwrap();
-            if resp.is_none() {
-                nones.push(entry);
-            }
-        }
-
-        // DEBUG
-        if !nones.is_empty() {
-            debug!("all keys: {:?}", entries);
-            debug!("missing keys: {:?}", nones);
-        }
-        // END DEBUG
-
-        assert!(
-            nones.is_empty(),
-            "there are {} values missing out of {}",
-            nones.len(),
-            entries.len(),
-        );
-
-        // Try to get value that is not present and should be none.
-        let (resp_tx, resp_rx) = oneshot::channel();
-
-        let missing_key = Bytes::from("example-key-that-was-never-set");
-        let cmd = Command::Get {
-            key: missing_key.clone(),
-            responder: resp_tx,
-        };
-
-        assert!(req_tx.send(cmd).await.is_ok());
-
-        let resp = resp_rx.await;
-        assert!(resp.is_ok(), "could not read response from channel");
-        let resp = resp.unwrap();
-        assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
-
-        let resp = resp.unwrap();
-        assert!(
-            resp.is_none(),
-            "key {:?} should be none but {:?} been returned",
-            missing_key,
-            resp
-        );
-    }
-
-    #[traced_test]
-    #[tokio::test]
     async fn test_run_with_fixtures() {
         // Initialize engine.
         let stor = mem::new();
@@ -712,6 +609,89 @@ mod tests {
             missing_key,
             resp
         );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_run_random_generated() {
+        // Initialize engine.
+        let stor = mem::new();
+        let (req_tx, req_rx) = mpsc::channel(64);
+        let engine = Engine::new(req_rx);
+        tokio::spawn(async move {
+            engine.run(stor).await;
+            tracing::error!("engine exited");
+        });
+
+        // Generate and populate entries.
+        let entries_cnt = 2000;
+        let mut entries: Vec<(Bytes, Bytes)> = vec![];
+        for _ in 0..entries_cnt {
+            let key = generate_valid_key();
+            let value = generate_valid_value();
+
+            entries.push((key.clone(), value.clone()));
+
+            assert!(req_tx
+                .send(Command::Set {
+                    key,
+                    value,
+                    responder: None
+                })
+                .await
+                .is_ok());
+        }
+
+        // Read values and record Nones if any.
+        let mut nones: Vec<Bytes> = vec![];
+        for entry in entries.clone() {
+            let (resp_tx, resp_rx) = oneshot::channel();
+
+            let cmd = Command::Get {
+                key: entry.0.clone(),
+                responder: resp_tx,
+            };
+
+            assert!(req_tx.send(cmd).await.is_ok());
+
+            let resp = resp_rx.await;
+            assert!(resp.is_ok(), "could not read response from channel");
+            let resp = resp.unwrap();
+            assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
+
+            let resp = resp.unwrap();
+            if resp.is_none() {
+                nones.push(entry.1.clone());
+            }
+        }
+
+        // DEBUG
+        if !nones.is_empty() {
+            debug!("all keys: {:?}", entries);
+            debug!("missing keys: {:?}", nones);
+        }
+        // END DEBUG
+
+        assert!(
+            nones.is_empty(),
+            "there are {} values missing out of {}",
+            nones.len(),
+            entries.len(),
+        );
+    }
+
+    fn generate_valid_key() -> Bytes {
+        let mut rng = thread_rng();
+        let length = rng.gen_range(1..=MAX_KEY_SIZE);
+        let random_bytes: Vec<u8> = (0..length).map(|_| rng.gen()).collect();
+        Bytes::from(random_bytes)
+    }
+
+    fn generate_valid_value() -> Bytes {
+        let mut rng = thread_rng();
+        let length = rng.gen_range(1..=MAX_VALUE_SIZE);
+        let random_bytes: Vec<u8> = (0..length).map(|_| rng.gen()).collect();
+        Bytes::from(random_bytes)
     }
 
     #[test]

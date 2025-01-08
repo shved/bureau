@@ -32,10 +32,8 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] rework memtable insert to probe size first
 - [x] make separate storage layer to abstract code that works with disk
 - [x] more unit tests
-- [ ] high level test with tests/proptests.rs
-- [ ] better logging to handle threads
-  - [ ] put logs to files
 - [ ] handle shutdown properly
+- [ ] put logs to files
 - [ ] wal
 - [ ] add workflow for testcov
 - [ ] cache
