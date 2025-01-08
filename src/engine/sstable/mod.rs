@@ -61,6 +61,8 @@ impl SsTable {
             bf.set(k);
         }
 
+        blocks.push(cur_block); // Finalize with the last block to add.
+
         Self {
             id: Self::generate_id(),
             blocks,
@@ -251,6 +253,8 @@ mod tests {
     use crate::Storage;
     use bytes::Bytes;
     use rand::seq::SliceRandom;
+    use tracing::debug;
+    use tracing_test::traced_test;
 
     /// Generates a full memtable that is filled with UUIDs as keys and values. Returns
     /// a memtable and a random pair of key and value present in the table.
@@ -281,13 +285,17 @@ mod tests {
     fn test_build() {
         let (mt, _, _) = create_full_memtable(SsTableSize::Default);
         let built = SsTable::build(mt);
+
+        // TODO: Not the best assertion since number of blocks is not guaranteed to be the same all the time.
+        // Test could potentially be flacky.
         assert_eq!(built.blocks.len(), 16);
     }
 
+    #[traced_test]
     #[test]
     fn test_lookup() {
         let (mt, key, value) = create_full_memtable(SsTableSize::Is(8 * 1024));
-        let built = SsTable::build(mt);
+        let built = SsTable::build(mt.clone());
         let encoded = built.encode();
 
         let stor = mem::new();
@@ -306,6 +314,42 @@ mod tests {
         let res = SsTable::lookup(&blob, &key);
         assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
         let res = res.unwrap();
+
+        // DEBUG
+        if res.is_none() {
+            debug!("key to find: {:?}", key);
+
+            // Memtable
+            debug!("memtable keys: {:?}", mt.keys());
+
+            // Index
+            let index_len = 168;
+            let mut index_data = vec![0; index_len];
+            encoded
+                .read_at(&mut index_data, bloom::ENCODED_LEN as u64)
+                .unwrap();
+            let index = TableIndex::decode(&index_data);
+            debug!("index: {:?}", index);
+
+            // Blocks
+            let block_len = 4096;
+            let mut block_1_data = vec![0; block_len];
+            encoded
+                .read_at(&mut block_1_data, (bloom::ENCODED_LEN + index_len) as u64)
+                .unwrap();
+            let block_1 = Block::decode(&block_1_data);
+            let mut block_2_data = vec![0; block_len];
+            encoded
+                .read_at(
+                    &mut block_2_data,
+                    (bloom::ENCODED_LEN + index_len + block_len) as u64,
+                )
+                .unwrap();
+            let block_2 = Block::decode(&block_2_data);
+            debug!("blocks: {}, {}", block_1, block_2);
+        }
+        // END DEBUG
+
         assert!(
             res.is_some(),
             "key {:?} should be found in table, but its not",
@@ -314,11 +358,11 @@ mod tests {
         assert_eq!(res.unwrap(), value);
     }
 
+    #[traced_test]
     #[test]
     fn test_probe_bloom_and_lookup_index() {
         let (mt, key, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
-
-        let built = SsTable::build(mt);
+        let built = SsTable::build(mt.clone());
         let encoded = built.encode();
 
         let res = SsTable::probe_bloom(&encoded, &key);
@@ -329,8 +373,45 @@ mod tests {
 
         let res = SsTable::lookup_index(&encoded, 168, &key);
         assert!(res.is_ok(), "lookup index err: {:?}", res.err().unwrap());
+
+        let res = res.unwrap();
+        // DEBUG
+        if res.is_none() {
+            debug!("key to find: {:?}", key);
+
+            // Memtable
+            debug!("memtable keys: {:?}", mt.keys());
+
+            // Index
+            let index_len = 168;
+            let mut index_data = vec![0; index_len];
+            encoded
+                .read_at(&mut index_data, bloom::ENCODED_LEN as u64)
+                .unwrap();
+            let index = TableIndex::decode(&index_data);
+            debug!("index: {:?}", index);
+
+            // Blocks
+            let block_len = 4096;
+            let mut block_1_data = vec![0; block_len];
+            encoded
+                .read_at(&mut block_1_data, (bloom::ENCODED_LEN + index_len) as u64)
+                .unwrap();
+            let block_1 = Block::decode(&block_1_data);
+            let mut block_2_data = vec![0; block_len];
+            encoded
+                .read_at(
+                    &mut block_2_data,
+                    (bloom::ENCODED_LEN + index_len + block_len) as u64,
+                )
+                .unwrap();
+            let block_2 = Block::decode(&block_2_data);
+            debug!("blocks: {}, {}", block_1, block_2);
+        }
+        // END DEBUG
+
         assert!(
-            res.unwrap().is_some(),
+            res.is_some(),
             "key {:?} should be in index, but not found",
             key,
         );
