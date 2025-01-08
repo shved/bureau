@@ -7,9 +7,12 @@ use std::collections::btree_map::BTreeMap;
 pub const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
 const MAX_ENTRY_SIZE: u32 = engine::MAX_KEY_SIZE + engine::MAX_VALUE_SIZE + block::ENTRY_OVERHEAD;
 
-/// It's a map with ordered keys. Size keeps track of memtable size in bytes
-/// according to layout of sstable. Max size is a limit after which a table
-/// will be flushed to disk.
+/// It's a map with ordered keys. Size keeps track of memtable size in bytes according to layout of sstable.
+/// Max size is a limit after which a table will be flushed to disk. Note that all the size calculations here
+/// before memtable being encoded are just approximation. We don't want to recalculate all the sstable layout
+/// every time a key is added or being updated. Number of blocks in the table and its final size are nor strict
+/// numbers nor guaranteed. What really matters is that we have blocks that are 4Kb (a memory page) in size
+/// and that we want minimize blocks padding (zeroes at the end of a block) if possible.
 #[derive(Debug, Clone)]
 pub struct MemTable {
     pub map: BTreeMap<Bytes, Bytes>,
@@ -41,9 +44,13 @@ impl MemTable {
             panic!("SsTable should be at least one block in size.")
         }
 
+        // Give the table initial size that is approximation of padding between blocks.
+        // Numbers are arbitrary, not accurate but will result in a more consistent payload between blocks.
+        let initial_size = (max_size / block::BLOCK_BYTE_SIZE as u32) * (engine::MAX_KEY_SIZE / 2);
+
         MemTable {
             map: BTreeMap::new(),
-            size: 0,
+            size: initial_size,
             max_size,
         }
     }
@@ -173,10 +180,10 @@ mod tests {
     #[test]
     fn test_insert() {
         let mut mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE));
-        assert_eq!(mt.size, 0);
+        assert_eq!(mt.size, 256);
 
-        mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(12));
-        assert_eq!(mt.size, 12);
+        mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(256 + 12));
+        assert_eq!(mt.size, 268);
         assert_eq!(mt.map.get(&Bytes::from("foo")), Some(&Bytes::from("bar")));
     }
 

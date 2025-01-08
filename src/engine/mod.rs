@@ -61,7 +61,7 @@ impl Engine {
 
     /// This function is to run in the background thread, to read and handle commands from
     /// the channel. It itself also spawns a dispathcher thread that works with everything
-    /// living on the disk a syncronized way.
+    /// living on the disk.
     pub async fn run<T: Storage>(mut self, storage: T) {
         storage
             .bootstrap()
@@ -525,7 +525,7 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn test_run_random() {
+    async fn test_run_random_generated() {
         // Initialize engine.
         let stor = mem::new();
         let (req_tx, req_rx) = mpsc::channel(64);
@@ -600,11 +600,35 @@ mod tests {
             nones.len(),
             entries.len(),
         );
+
+        // Try to get value that is not present and should be none.
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        let missing_key = Bytes::from("example-key-that-was-never-set");
+        let cmd = Command::Get {
+            key: missing_key.clone(),
+            responder: resp_tx,
+        };
+
+        assert!(req_tx.send(cmd).await.is_ok());
+
+        let resp = resp_rx.await;
+        assert!(resp.is_ok(), "could not read response from channel");
+        let resp = resp.unwrap();
+        assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
+
+        let resp = resp.unwrap();
+        assert!(
+            resp.is_none(),
+            "key {:?} should be none but {:?} been returned",
+            missing_key,
+            resp
+        );
     }
 
     #[traced_test]
     #[tokio::test]
-    async fn test_run_preordered() {
+    async fn test_run_with_fixtures() {
         // Initialize engine.
         let stor = mem::new();
         let (req_tx, req_rx) = mpsc::channel(64);
@@ -665,7 +689,29 @@ mod tests {
             DATA.len(),
         );
 
-        // TODO: Add requests for keys that was not added and should be None.
+        // Try to get value that is not present and should be none.
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        let missing_key = Bytes::from("example-key-that-was-never-set");
+        let cmd = Command::Get {
+            key: missing_key.clone(),
+            responder: resp_tx,
+        };
+
+        assert!(req_tx.send(cmd).await.is_ok());
+
+        let resp = resp_rx.await;
+        assert!(resp.is_ok(), "could not read response from channel");
+        let resp = resp.unwrap();
+        assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
+
+        let resp = resp.unwrap();
+        assert!(
+            resp.is_none(),
+            "key {:?} should be none but {:?} been returned",
+            missing_key,
+            resp
+        );
     }
 
     #[test]

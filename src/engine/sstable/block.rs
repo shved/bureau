@@ -184,7 +184,7 @@ impl Block {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.offsets.len() < 3
+        self.offsets.len() < 1
     }
 }
 

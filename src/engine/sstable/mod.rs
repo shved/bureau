@@ -285,6 +285,9 @@ mod tests {
     fn test_build() {
         let (mt, _, _) = create_full_memtable(SsTableSize::Default);
         let built = SsTable::build(mt);
+
+        // TODO: Not the best assertion since number of blocks is not guaranteed to be the same all the time.
+        // Test could potentially be flacky.
         assert_eq!(built.blocks.len(), 16);
     }
 
