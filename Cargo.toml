@@ -19,7 +19,7 @@ harness = false
 anyhow = "1.0.95"
 bloomfilter = "3.0.1"
 bytes = "1.9.0"
-clap = { version = "4.5.24", features = ["derive"] }
+clap = { version = "4.5.26", features = ["derive"] }
 crc32fast = "1.4.2"
 futures = { version = "0.3.31", features = ["thread-pool"] }
 tokio = { version = "1.42.0", features = ["full", "tracing"] }
