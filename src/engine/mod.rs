@@ -73,10 +73,10 @@ impl Engine {
 
         let join_handle = tokio::spawn(async move {
             disp.run().await;
-            tracing::error!("dispatched exited");
+            tracing::error!("dispatcher exited");
         });
         tokio::spawn(async move {
-            tracing::error!("dispatched exit: {:?}", join_handle.await);
+            tracing::error!("dispatcher exit: {:?}", join_handle.await);
         });
 
         // TODO: Change it to select! here to handle shutdown.
@@ -179,7 +179,7 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
 mod tests {
     use super::*;
     use crate::storage::mem;
-    use rand::{rngs::ThreadRng, thread_rng, Rng};
+    use rand::{thread_rng, Rng};
     use tracing::debug;
     use tracing_test::traced_test;
 

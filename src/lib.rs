@@ -1,4 +1,5 @@
-pub mod engine;
+mod engine;
+pub mod server;
 pub mod storage;
 
 use std::io;
