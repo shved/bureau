@@ -4,30 +4,77 @@ use bytes::Bytes;
 use futures::SinkExt;
 use std::error::Error;
 use std::future::Future;
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 use tokio::sync::{mpsc, mpsc::Sender, oneshot};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{error, warn};
 
+/// Maximum number of concurrent connections server will accept. When this limit is reached,
+/// the server will stop accepting connections until an active connection terminates.
+// TODO: Make configurable.
+const MAX_CONN: usize = 256;
+
+/// Requests channel capacity. It has nothing to do with connections limit, but gut feeling
+/// says it should be set to somewhat higher then MAX_CONN value.
+const MAX_REQUESTS: usize = 512;
+
+/// Buffer of bytes for a single request. Taking into account keys and values size limits
+/// this number will do a fine job.
+const CODEC_BUFFER_SIZE: usize = 4096;
+
+/// Request commands supported.
+// TODO: Make it all bytes. No real reason to have strings here.
 enum Request {
     Get { key: String },
     Set { key: String, value: String },
 }
 
+/// Possible responses structures.
+// TODO: Make it all bytes. No real reason to have strings here.
 enum Response {
     Get { key: String, value: Bytes },
     Set { key: String, value: Bytes },
     Error { msg: String },
 }
 
+#[derive(Debug)]
+struct Listener {
+    listener: TcpListener,
+    conn_limit: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+pub enum ConnLimit {
+    Default,
+    Is(usize),
+}
+
+impl Listener {
+    fn new(listener: TcpListener, limit: ConnLimit) -> Self {
+        let max_conn = match limit {
+            ConnLimit::Default => MAX_CONN,
+            ConnLimit::Is(val) => val,
+        };
+
+        Listener {
+            listener,
+            conn_limit: Arc::new(Semaphore::new(max_conn)),
+        }
+    }
+}
+
 pub async fn run<S: Storage>(
     listener: TcpListener,
+    max_conn: ConnLimit,
     stor: S,
     _signal: impl Future,
 ) -> crate::Result<(), Box<dyn Error>> {
-    let (req_tx, req_rx) = mpsc::channel(128);
+    let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
     let engine = Engine::new(req_rx);
+    let listener = Listener::new(listener, max_conn);
 
     let engine_handle = tokio::spawn(async move {
         engine.run(stor).await;
@@ -37,16 +84,21 @@ pub async fn run<S: Storage>(
     let network_loop_handle = tokio::spawn(async move {
         // TODO here while !self.shutdown()
         loop {
-            match listener.accept().await {
+            let permit = listener.conn_limit.clone().acquire_owned().await.unwrap();
+
+            match listener.listener.accept().await {
                 Ok((socket, _)) => {
                     let req_tx = req_tx.clone();
 
                     tokio::spawn(async move {
                         handle_client(socket, &req_tx).await;
+                        drop(permit);
                     });
                 }
-
-                Err(e) => error!("error accepting socket; error = {:?}", e),
+                Err(e) => {
+                    error!("error accepting socket; error = {:?}", e);
+                    drop(permit);
+                }
             }
         }
     });
@@ -65,8 +117,10 @@ pub async fn run<S: Storage>(
     Ok(())
 }
 
+/// When the new connection is accepted it is handled by this function.
+/// It runs loop reading new requests from a single client.
 async fn handle_client(socket: TcpStream, sender: &Sender<Command>) {
-    let mut lines = Framed::new(socket, LinesCodec::new());
+    let mut lines = Framed::new(socket, LinesCodec::new_with_max_length(CODEC_BUFFER_SIZE));
 
     while let Some(result) = lines.next().await {
         match result {
@@ -97,6 +151,7 @@ async fn handle_client(socket: TcpStream, sender: &Sender<Command>) {
     }
 }
 
+/// This function is called for every single valid request from a client.
 async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Response {
     match request {
         Request::Get { key } => {
@@ -227,7 +282,7 @@ mod tests {
         let addr = listener.local_addr().unwrap(); // Get the actual address
 
         let server_handle = tokio::spawn(async move {
-            let server_result = run(listener, stor, signal::ctrl_c()).await;
+            let server_result = run(listener, ConnLimit::Is(1), stor, signal::ctrl_c()).await;
             tracing::error!("server returned: {:?}", server_result);
         });
         tokio::spawn(async move {

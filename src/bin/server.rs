@@ -1,5 +1,4 @@
-use bureau::server;
-use bureau::{storage, storage::DataPath};
+use bureau::{server, server::ConnLimit, storage, storage::DataPath};
 use std::env;
 use std::error::Error;
 use tokio::net::TcpListener;
@@ -22,7 +21,7 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(&addr).await?;
 
     info!("Listening on: {}", addr);
-    if let Err(e) = server::run(listener, stor, signal::ctrl_c()).await {
+    if let Err(e) = server::run(listener, ConnLimit::Default, stor, signal::ctrl_c()).await {
         error!("server exited: {}", e);
         std::process::exit(1);
     }

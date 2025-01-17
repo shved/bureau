@@ -33,6 +33,8 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] make separate storage layer to abstract code that works with disk
 - [x] more unit tests
 - [ ] handle shutdown properly
+- [ ] build config from env at the server start
+- [ ] with server test try to also test concurrency, connection limit, connection drop
 - [ ] clear in/out format, serialize response into just bytes array, not a formatted string
 - [ ] put logs to files
 - [ ] wal
