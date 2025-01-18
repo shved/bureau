@@ -146,6 +146,8 @@ async fn handle_client(socket: TcpStream, sender: &Sender<Command>) {
             },
             Err(e) => {
                 error!("error on decoding from socket; error = {:?}", e);
+                // Drop client in case the error isnt recoverable. Client should handle that and reconnect.
+                break;
             }
         }
     }
