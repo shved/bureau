@@ -41,7 +41,7 @@ enum Response {
 }
 
 #[derive(Debug)]
-struct Listener {
+struct ListenerWithCap {
     listener: TcpListener,
     conn_limit: Arc<Semaphore>,
 }
@@ -52,14 +52,14 @@ pub enum ConnLimit {
     Is(usize),
 }
 
-impl Listener {
+impl ListenerWithCap {
     fn new(listener: TcpListener, limit: ConnLimit) -> Self {
         let max_conn = match limit {
             ConnLimit::Default => MAX_CONN,
             ConnLimit::Is(val) => val,
         };
 
-        Listener {
+        ListenerWithCap {
             listener,
             conn_limit: Arc::new(Semaphore::new(max_conn)),
         }
@@ -74,7 +74,7 @@ pub async fn run<S: Storage>(
 ) -> crate::Result<(), Box<dyn Error>> {
     let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
     let engine = Engine::new(req_rx);
-    let listener = Listener::new(listener, max_conn);
+    let listener = ListenerWithCap::new(listener, max_conn);
 
     let engine_handle = tokio::spawn(async move {
         engine.run(stor).await;
