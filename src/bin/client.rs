@@ -13,7 +13,7 @@ struct Args {
     address: String,
 }
 
-// TODO: Make client component. Make it hanlde connection reset from server and reconnect.
+// TODO: Extract client component. Make it hanlde connection reset from server and reconnect.
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();

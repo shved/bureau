@@ -2,15 +2,17 @@ use crate::engine::{Command, Engine};
 use crate::Storage;
 use bytes::Bytes;
 use futures::SinkExt;
+use socket2::{SockRef, TcpKeepalive};
 use std::error::Error;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::sync::{mpsc, mpsc::Sender, oneshot};
+use tokio::time::Duration;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 /// Maximum number of concurrent connections server will accept. When this limit is reached,
 /// the server will stop accepting connections until an active connection terminates.
@@ -90,13 +92,19 @@ pub async fn run<S: Storage>(
                 Ok((socket, _)) => {
                     let req_tx = req_tx.clone();
 
+                    if let Err(e) = keep_alive_options(&socket) {
+                        error!("setting up keep alive option to socket: {}", e);
+                        drop(permit);
+                        continue;
+                    }
+
                     tokio::spawn(async move {
                         handle_client(socket, &req_tx).await;
                         drop(permit);
                     });
                 }
                 Err(e) => {
-                    error!("error accepting socket; error = {:?}", e);
+                    error!("error accepting connection; error = {:?}", e);
                     drop(permit);
                 }
             }
@@ -115,6 +123,15 @@ pub async fn run<S: Storage>(
     };
 
     Ok(())
+}
+
+fn keep_alive_options(socket: &TcpStream) -> Result<(), std::io::Error> {
+    let sock_ref = SockRef::from(&socket);
+    let mut ka = TcpKeepalive::new();
+    ka = ka.with_time(Duration::from_secs(30));
+    ka = ka.with_interval(Duration::from_secs(30));
+    ka = ka.with_retries(3);
+    sock_ref.set_tcp_keepalive(&ka)
 }
 
 /// When the new connection is accepted it is handled by this function.
@@ -145,12 +162,14 @@ async fn handle_client(socket: TcpStream, sender: &Sender<Command>) {
                 }
             },
             Err(e) => {
-                error!("error on decoding from socket; error = {:?}", e);
-                // Drop client in case the error isnt recoverable. Client should handle that and reconnect.
+                error!("error on reading from socket; error = {:?}", e);
+                // Terminate connection.
                 break;
             }
         }
     }
+
+    info!("connection closed");
 }
 
 /// This function is called for every single valid request from a client.

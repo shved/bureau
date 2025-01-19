@@ -143,6 +143,7 @@ dependencies = [
  "futures",
  "rand",
  "random-string",
+ "socket2",
  "tokio",
  "tokio-stream",
  "tokio-util",
