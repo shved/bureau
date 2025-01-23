@@ -7,7 +7,7 @@ use std::error::Error;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Semaphore;
+use tokio::sync::{broadcast, Semaphore};
 use tokio::sync::{mpsc, mpsc::Sender, oneshot};
 use tokio::time::Duration;
 use tokio_stream::StreamExt;
@@ -45,7 +45,8 @@ enum Response {
 #[derive(Debug)]
 struct ListenerWithCap {
     listener: TcpListener,
-    conn_limit: Arc<Semaphore>,
+    permits: Arc<Semaphore>,
+    max_connections: usize,
 }
 
 #[derive(Debug)]
@@ -61,71 +62,114 @@ impl ListenerWithCap {
             ConnLimit::Is(val) => val,
         };
 
-        ListenerWithCap {
+        Self {
             listener,
-            conn_limit: Arc::new(Semaphore::new(max_conn)),
+            permits: Arc::new(Semaphore::new(max_conn)),
+            max_connections: max_conn,
         }
     }
 }
 
+struct ConnPoolGuard {
+    max_conns: usize,
+    pool: Arc<Semaphore>,
+}
+
+impl ConnPoolGuard {
+    fn new(max_conns: usize, pool: Arc<Semaphore>) -> Self {
+        Self { max_conns, pool }
+    }
+
+    fn active_connections(&self) -> usize {
+        self.max_conns - self.pool.available_permits()
+    }
+}
+
+/// Starts db engine and loop that accepts and handles connection. Signal Future is used
+/// to shutdown the whole thing. Connections are limited by a given capacity.
 pub async fn run<S: Storage>(
     listener: TcpListener,
     max_conn: ConnLimit,
     stor: S,
-    _signal: impl Future,
+    signal: impl Future,
 ) -> crate::Result<(), Box<dyn Error>> {
     let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
     let engine = Engine::new(req_rx);
     let listener = ListenerWithCap::new(listener, max_conn);
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let pool_guard = ConnPoolGuard::new(listener.max_connections, listener.permits.clone());
 
     let engine_handle = tokio::spawn(async move {
         engine.run(stor).await;
-        tracing::error!("engine exited");
+        tracing::error!("engine exited"); // TODO: only log error if it exited with error;
     });
 
-    let network_loop_handle = tokio::spawn(async move {
-        // TODO here while !self.shutdown()
-        loop {
-            let permit = listener.conn_limit.clone().acquire_owned().await.unwrap();
+    let network_loop_handle = tokio::spawn({
+        let mut network_loop_shutdown_rx = shutdown_tx.subscribe();
+        let clients_shutdown_tx = shutdown_tx.clone();
 
-            match listener.listener.accept().await {
-                Ok((socket, _)) => {
-                    let req_tx = req_tx.clone();
-
-                    if let Err(e) = keep_alive_options(&socket) {
-                        error!("setting up keep alive option to socket: {}", e);
-                        drop(permit);
-                        continue;
-                    }
-
-                    tokio::spawn(async move {
-                        handle_client(socket, &req_tx).await;
-                        drop(permit);
-                    });
+        async move {
+            loop {
+                tokio::select! {
+                _ = network_loop_shutdown_rx.recv() => {
+                    info!("shutting down the server");
+                    break;
                 }
-                Err(e) => {
-                    error!("error accepting connection; error = {:?}", e);
-                    drop(permit);
+                permit = listener.permits.clone().acquire_owned() => {
+                        let permit = permit.unwrap();
+
+                        match listener.listener.accept().await {
+                            Ok((socket, _)) => {
+                                let req_tx = req_tx.clone();
+                                let client_shutdown_rx = clients_shutdown_tx.subscribe();
+
+                                if let Err(e) = apply_keep_alive_options(&socket) {
+                                    error!("Setting up keep-alive options failed: {}", e);
+                                    drop(permit);
+                                    continue;
+                                }
+
+                                tokio::spawn(async move {
+                                    handle_client(socket, req_tx, client_shutdown_rx).await;
+                                    drop(permit);
+                                });
+                            }
+                            Err(e) => {
+                                error!("Error accepting connection: {:?}", e);
+                                drop(permit);
+                            }
+                        }
+                    }
                 }
             }
         }
     });
 
     tokio::select! {
+        _ = signal => {
+            info!("shutdown signal received");
+            let _ = shutdown_tx.send(());
+        },
         res = engine_handle => {
-            tracing::error!("engine handle down: {res:?}");
+            tracing::error!("engine exited: {:?}", res);
             res?;
         },
         res = network_loop_handle => {
-            tracing::error!("network loop down: {res:?}");
+            tracing::error!("network accept loop exited: {:?}", res);
             res?;
         }
-    };
+    }
+
+    while pool_guard.active_connections() > 0 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    info!("bye!");
 
     Ok(())
 }
 
-fn keep_alive_options(socket: &TcpStream) -> Result<(), std::io::Error> {
+fn apply_keep_alive_options(socket: &TcpStream) -> Result<(), std::io::Error> {
     let sock_ref = SockRef::from(&socket);
     let mut ka = TcpKeepalive::new();
     ka = ka.with_time(Duration::from_secs(30));
@@ -134,37 +178,53 @@ fn keep_alive_options(socket: &TcpStream) -> Result<(), std::io::Error> {
     sock_ref.set_tcp_keepalive(&ka)
 }
 
-/// When the new connection is accepted it is handled by this function.
-/// It runs loop reading new requests from a single client.
-async fn handle_client(socket: TcpStream, sender: &Sender<Command>) {
+/// When the new connection is accepted it is handled by this function. It runs loop
+/// reading new requests from a single client. Once shutdown signal is recieved,
+/// loop is exited and connection is being terminated.
+async fn handle_client(
+    socket: TcpStream,
+    sender: Sender<Command>,
+    mut shutdown: broadcast::Receiver<()>,
+) {
     let mut lines = Framed::new(socket, LinesCodec::new_with_max_length(CODEC_BUFFER_SIZE));
 
-    while let Some(result) = lines.next().await {
-        match result {
-            Ok(line) => match Request::parse(&line) {
-                Ok(request) => {
-                    let response = handle_request(request, sender).await;
-                    let serialized = response.serialize();
+    loop {
+        tokio::select! {
+            result = lines.next() => { // New line from socket.
+                match result {
+                    Some(Ok(line)) => {
+                        match Request::parse(&line) { // Parse line.
+                            Ok(request) => {
+                                let response = handle_request(request, &sender).await;
+                                let serialized = response.serialize();
 
-                    if let Err(e) = lines.send(&serialized).await {
-                        warn!("error on sending response; error = {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    let response = Response::Error {
-                        msg: format!("could not parse command: {}", e),
-                    };
-                    let serialized = response.serialize();
+                                if let Err(e) = lines.send(&serialized).await {
+                                    warn!("error sending response: {:?}", e);
+                                }
+                            }
+                            Err(e) => {
+                                let response = Response::Error {
+                                    msg: format!("could not parse command: {}", e),
+                                };
+                                let serialized = response.serialize();
 
-                    if let Err(e) = lines.send(serialized.as_str()).await {
-                        warn!("error on sending response; error = {:?}", e);
+                                if let Err(e) = lines.send(serialized.as_str()).await {
+                                    warn!("error sending response: {:?}", e);
+                                }
+                            }
+                        }
                     }
+                    Some(Err(e)) => {
+                        error!("error reading from socket: {:?}", e);
+                        // Close connection since it's probably broken. Client will reconnect.
+                        break;
+                    }
+                    None => break, // Exit loop, connections was closed by client.
                 }
-            },
-            Err(e) => {
-                error!("error on reading from socket; error = {:?}", e);
-                // Terminate connection.
-                break;
+            }
+            _ = shutdown.recv() => {
+                info!("shutdown signal received for connection");
+                break; // Exit loop, connection is to shut down.
             }
         }
     }

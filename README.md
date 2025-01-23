@@ -32,14 +32,14 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] rework memtable insert to probe size first
 - [x] make separate storage layer to abstract code that works with disk
 - [x] more unit tests
-- [ ] handle shutdown properly
-- [ ] build config from env at the server start
+- [x] handle shutdown properly
 - [ ] with server test try to also test concurrency, connection limit, connection drop
 - [ ] clear in/out format, serialize response into just bytes array, not a formatted string
 - [ ] put logs to files
 - [ ] wal
 - [ ] cache
 - [ ] compaction
+- [ ] build config from env at the server start
 - [ ] add workflow for testcov
 - [ ] performance testing
 - [ ] make bin crate alfa version
