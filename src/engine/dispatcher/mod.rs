@@ -3,8 +3,7 @@ mod index;
 
 use crate::engine::memtable::MemTable;
 use crate::engine::sstable::SsTable;
-use crate::Responder;
-use crate::Storage;
+use crate::{Responder, Result, Storage};
 use bytes::Bytes;
 use index::Index;
 use tokio::sync::mpsc;
@@ -20,6 +19,9 @@ pub enum Command {
         responder: Responder<()>,
     },
     ReplaceTables(((Uuid, Uuid), Uuid)), // TODO: To be used by a compaction thread.
+    Shutdown {
+        responder: Responder<()>,
+    },
 }
 
 /// Dispatcher is managing SSTables on disk, syncronizing access and modification.
@@ -55,7 +57,7 @@ impl<T: Storage> Dispatcher<T> {
         })
     }
 
-    pub async fn run(mut self) {
+    pub async fn run(mut self) -> Result<()> {
         while let Some(cmd) = self.cmd_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
@@ -86,7 +88,7 @@ impl<T: Storage> Dispatcher<T> {
                 Command::CreateTable { data, responder } => {
                     self.sst_buf += 1;
                     if self.sst_buf < self.sst_buf_size {
-                        responder.send(Ok(())).ok(); // If buffer isnt full ack immediately to free engine thread.
+                        let _ = responder.send(Ok(())); // If buffer isnt full ack immediately to free engine thread.
                         let id = self.persist_table(data);
                         self.index.prepend(id);
                         self.sst_buf -= 1;
@@ -94,14 +96,21 @@ impl<T: Storage> Dispatcher<T> {
                         let id = self.persist_table(data);
                         self.index.prepend(id);
                         self.sst_buf -= 1;
-                        responder.send(Ok(())).ok(); // If buffer is full, ack only when the table is on disk.
+                        let _ = responder.send(Ok(())); // If buffer is full, ack only when the table is on disk.
                     }
                 }
                 Command::ReplaceTables(((_old1, _old2), _new)) => {
                     todo!()
                 }
+                Command::Shutdown { responder } => {
+                    let _ = responder.send(Ok(()));
+                    // TODO: Call disk buffers flush/sync_all by calling storage shutdown
+                    return Ok(());
+                }
             }
         }
+
+        Ok(())
     }
 
     fn persist_table(&self, data: MemTable) -> Uuid {

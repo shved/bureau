@@ -94,24 +94,31 @@ pub async fn run<S: Storage>(
     signal: impl Future,
 ) -> crate::Result<(), Box<dyn Error>> {
     let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
+    let engine_shutdown_command_tx = req_tx.clone();
     let engine = Engine::new(req_rx);
     let listener = ListenerWithCap::new(listener, max_conn);
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let (network_shutdown_tx, _) = broadcast::channel::<()>(1);
     let pool_guard = ConnPoolGuard::new(listener.max_connections, listener.permits.clone());
 
     let engine_handle = tokio::spawn(async move {
-        engine.run(stor).await;
-        tracing::error!("engine exited"); // TODO: only log error if it exited with error;
+        match engine.run(stor).await {
+            Ok(()) => {
+                tracing::info!("engine stoped");
+            }
+            Err(e) => {
+                tracing::error!("engine exited with error: {:?}", e);
+            }
+        };
     });
 
     let network_loop_handle = tokio::spawn({
-        let mut network_loop_shutdown_rx = shutdown_tx.subscribe();
-        let clients_shutdown_tx = shutdown_tx.clone();
+        let mut network_shutdown_rx = network_shutdown_tx.subscribe();
+        let clients_shutdown_tx = network_shutdown_tx.clone();
 
         async move {
             loop {
                 tokio::select! {
-                _ = network_loop_shutdown_rx.recv() => {
+                _ = network_shutdown_rx.recv() => {
                     info!("shutting down the server");
                     break;
                 }
@@ -148,7 +155,7 @@ pub async fn run<S: Storage>(
     tokio::select! {
         _ = signal => {
             info!("shutdown signal received");
-            let _ = shutdown_tx.send(());
+            let _ = network_shutdown_tx.send(());
         },
         res = engine_handle => {
             tracing::error!("engine exited: {:?}", res);
@@ -163,6 +170,15 @@ pub async fn run<S: Storage>(
     while pool_guard.active_connections() > 0 {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+
+    let (engine_shutdown_rx, engine_shutdown_tx) = oneshot::channel();
+    engine_shutdown_command_tx
+        .send(Command::Shutdown {
+            responder: engine_shutdown_rx,
+        })
+        .await?;
+
+    let _ = engine_shutdown_tx.await?;
 
     info!("bye!");
 
@@ -351,7 +367,6 @@ mod tests {
     use tokio::io::AsyncWriteExt;
     use tokio::net::{TcpListener, TcpStream};
     use tokio::signal;
-    // use tracing::debug;
     use tracing_test::traced_test;
 
     #[traced_test]

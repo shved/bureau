@@ -3,10 +3,8 @@ pub mod memtable;
 mod sstable;
 mod wal;
 
-use crate::engine::memtable::MemTable;
-use crate::engine::memtable::SsTableSize;
-use crate::Responder;
-use crate::Storage;
+use crate::engine::memtable::{MemTable, SsTableSize};
+use crate::{Responder, Result, Storage};
 use bytes::Bytes;
 use dispatcher::Dispatcher;
 use tokio::sync::{mpsc, oneshot};
@@ -37,14 +35,15 @@ pub enum Command {
         // Having an optional responder here allows to issue 'fire-and-forget' set commands.
         responder: Option<Responder<()>>,
     },
+    Shutdown {
+        responder: Responder<()>,
+    },
 }
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Engine {
     input_rx: mpsc::Receiver<Command>,
-    // TODO: Channel to shutdown + tokio::select! inside run loop.
-    // shutdown_rx: mpsc::Receiver<Command>,
     memtable: MemTable,
     wal: wal::Wal,
 }
@@ -62,7 +61,7 @@ impl Engine {
     /// This function is to run in the background thread, to read and handle commands from
     /// the channel. It itself also spawns a dispathcher thread that works with everything
     /// living on the disk.
-    pub async fn run<T: Storage>(mut self, storage: T) {
+    pub async fn run<T: Storage>(mut self, storage: T) -> Result<()> {
         storage
             .bootstrap()
             .unwrap_or_else(|e| panic!("Could not setup storage: {}", e));
@@ -72,14 +71,20 @@ impl Engine {
             .unwrap_or_else(|e| panic!("Could not initialize dispatcher: {}", e));
 
         let join_handle = tokio::spawn(async move {
-            disp.run().await;
+            match disp.run().await {
+                Ok(()) => {
+                    tracing::info!("dispatcher stoped");
+                }
+                Err(e) => {
+                    tracing::error!("dispatcher exited with error: {:?}", e);
+                }
+            };
             tracing::error!("dispatcher exited");
         });
         tokio::spawn(async move {
             tracing::error!("dispatcher exit: {:?}", join_handle.await);
         });
 
-        // TODO: Change it to select! here to handle shutdown.
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
@@ -131,8 +136,21 @@ impl Engine {
                         }
                     }
                 }
+                Command::Shutdown { responder } => {
+                    let (disp_shutdown_rx, disp_shutdown_tx) = oneshot::channel();
+                    let _ = disp_tx
+                        .send(dispatcher::Command::Shutdown {
+                            responder: disp_shutdown_rx,
+                        })
+                        .await;
+                    let _ = disp_shutdown_tx.await?;
+                    let _ = responder.send(Ok(()));
+                    return Ok(());
+                }
             };
         }
+
+        Ok(())
     }
 
     /// It only checks hot spots: cache, memtable.
