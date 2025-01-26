@@ -550,8 +550,9 @@ mod tests {
         let engine = Engine::new(req_rx);
 
         tokio::spawn(async move {
-            engine.run(stor).await;
-            tracing::error!("engine exited");
+            if let Err(e) = engine.run(stor).await {
+                panic!("engine exited with error: {:?}", e);
+            };
         });
 
         for str in DATA {
@@ -637,8 +638,9 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(64);
         let engine = Engine::new(req_rx);
         tokio::spawn(async move {
-            engine.run(stor).await;
-            tracing::error!("engine exited");
+            if let Err(e) = engine.run(stor).await {
+                panic!("engine exited with error: {:?}", e);
+            };
         });
 
         // Generate and populate entries.

@@ -103,8 +103,8 @@ impl<T: Storage> Dispatcher<T> {
                     todo!()
                 }
                 Command::Shutdown { responder } => {
+                    let _ = self.storage.close();
                     let _ = responder.send(Ok(()));
-                    // TODO: Call disk buffers flush/sync_all by calling storage shutdown
                     return Ok(());
                 }
             }

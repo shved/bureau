@@ -48,6 +48,10 @@ impl crate::Storage for MemStorage {
             )),
         }
     }
+
+    fn close(&self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl crate::StorageEntry for Vec<u8> {
