@@ -8,7 +8,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::broadcast;
 use tokio::sync::{mpsc, mpsc::Sender, oneshot};
 use tokio::time::Duration;
 use tokio_stream::StreamExt;
@@ -17,8 +17,7 @@ use tracing::{error, info, warn};
 
 /// Maximum number of concurrent connections server will accept. When this limit is reached,
 /// the server will stop accepting connections until an active connection terminates.
-// TODO: Make configurable.
-const MAX_CONN: usize = 256;
+const MAX_CONN: usize = 128;
 
 /// Requests channel capacity. It has nothing to do with connections limit, but gut feeling
 /// says it should be set to somewhat higher then MAX_CONN value.
@@ -27,6 +26,11 @@ const MAX_REQUESTS: usize = 512;
 /// Buffer of bytes for a single request. Taking into account keys and values size limits
 /// this number will do a fine job.
 const CODEC_BUFFER_SIZE: usize = 4096;
+
+pub enum ConnLimit {
+    Default,
+    Is(usize),
+}
 
 /// Request commands supported.
 // TODO: Make it all bytes. No real reason to have strings here.
@@ -43,49 +47,6 @@ enum Response {
     Error { msg: String },
 }
 
-#[derive(Debug)]
-struct ListenerWithCap {
-    listener: TcpListener,
-    permits: Arc<Semaphore>,
-    max_connections: usize,
-}
-
-#[derive(Debug)]
-pub enum ConnLimit {
-    Default,
-    Is(usize),
-}
-
-impl ListenerWithCap {
-    fn new(listener: TcpListener, limit: ConnLimit) -> Self {
-        let max_conn = match limit {
-            ConnLimit::Default => MAX_CONN,
-            ConnLimit::Is(val) => val,
-        };
-
-        Self {
-            listener,
-            permits: Arc::new(Semaphore::new(max_conn)),
-            max_connections: max_conn,
-        }
-    }
-}
-
-struct ConnPoolGuard {
-    max_conns: usize,
-    pool: Arc<Semaphore>,
-}
-
-impl ConnPoolGuard {
-    fn new(max_conns: usize, pool: Arc<Semaphore>) -> Self {
-        Self { max_conns, pool }
-    }
-
-    fn active_connections(&self) -> usize {
-        self.max_conns - self.pool.available_permits()
-    }
-}
-
 /// Starts db engine and loop that accepts and handles connection. Signal Future is used
 /// to shutdown the whole thing. Connections are limited by a given capacity.
 pub async fn run<S: Storage>(
@@ -97,9 +58,12 @@ pub async fn run<S: Storage>(
     let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
     let engine_shutdown_command_tx = req_tx.clone();
     let engine = Engine::new(req_rx);
-    let listener = ListenerWithCap::new(listener, max_conn);
     let (network_shutdown_tx, _) = broadcast::channel::<()>(1);
-    let pool_guard = ConnPoolGuard::new(listener.max_connections, listener.permits.clone());
+
+    let max_conn = match max_conn {
+        ConnLimit::Default => MAX_CONN,
+        ConnLimit::Is(val) => val,
+    };
 
     let engine_handle = tokio::spawn(async move {
         match engine.run(stor).await {
@@ -112,40 +76,45 @@ pub async fn run<S: Storage>(
         };
     });
 
+    let clients_cnt = Arc::new(AtomicI64::new(0));
+
     let network_loop_handle = tokio::spawn({
         let mut network_shutdown_rx = network_shutdown_tx.subscribe();
         let clients_shutdown_tx = network_shutdown_tx.clone();
+        let clients_cnt = clients_cnt.clone();
 
         async move {
-            let clients_cnt = Arc::new(AtomicI64::new(0));
-
             loop {
                 tokio::select! {
                 _ = network_shutdown_rx.recv() => {
                     info!("shutting down the server");
                     break;
                 }
-                socket = listener.listener.accept() => {
+                socket = listener.accept() => {
                         match socket {
                             Ok((socket, _)) => {
-                                let req_tx = req_tx.clone();
-                                let client_shutdown_rx = clients_shutdown_tx.subscribe();
-
-                                if let Err(e) = apply_keep_alive_options(&socket) {
-                                    error!("Setting up keep-alive options failed: {}", e);
+                                if let Err(e) = apply_socket_options(&socket) {
+                                    error!("setting up keep-alive options failed: {}", e);
                                     continue;
                                 }
 
+                                if clients_cnt.load(Ordering::Relaxed) >= max_conn as i64 {
+                                    warn!("max connections reached, rejecting client");
+                                    continue;
+                                }
+
+                                let req_tx = req_tx.clone();
+                                let client_shutdown_rx = clients_shutdown_tx.subscribe();
                                 clients_cnt.fetch_add(1, Ordering::Relaxed);
-                                let clients_cnt_to_dec = clients_cnt.clone();
+                                let clients_cnt = clients_cnt.clone();
 
                                 tokio::spawn(async move {
                                     handle_client(socket, req_tx, client_shutdown_rx).await;
-                                    clients_cnt_to_dec.fetch_add(-1, Ordering::Relaxed);
+                                    clients_cnt.fetch_add(-1, Ordering::Relaxed);
                                 });
                             }
                             Err(e) => {
-                                error!("Error accepting connection: {:?}", e);
+                                error!("error accepting connection: {:?}", e);
                             }
                         }
                     }
@@ -172,7 +141,7 @@ pub async fn run<S: Storage>(
         }
     }
 
-    while pool_guard.active_connections() > 0 {
+    while clients_cnt.load(Ordering::Relaxed) > 0 {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
@@ -193,7 +162,8 @@ pub async fn run<S: Storage>(
     Ok(())
 }
 
-fn apply_keep_alive_options(socket: &TcpStream) -> Result<(), std::io::Error> {
+fn apply_socket_options(socket: &TcpStream) -> Result<(), std::io::Error> {
+    socket.set_nodelay(true)?;
     let sock_ref = SockRef::from(&socket);
     let mut ka = TcpKeepalive::new();
     ka = ka.with_time(Duration::from_secs(30));
@@ -210,19 +180,19 @@ async fn handle_client(
     sender: Sender<Command>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
-    let mut lines = Framed::new(socket, LinesCodec::new_with_max_length(CODEC_BUFFER_SIZE));
+    let mut framed_stream = Framed::new(socket, LinesCodec::new_with_max_length(CODEC_BUFFER_SIZE));
 
     loop {
         tokio::select! {
-            result = lines.next() => { // New line from socket.
+            result = framed_stream.next() => {
                 match result {
                     Some(Ok(line)) => {
-                        match Request::parse(&line) { // Parse line.
+                        match Request::parse(&line) {
                             Ok(request) => {
                                 let response = handle_request(request, &sender).await;
                                 let serialized = response.serialize();
 
-                                if let Err(e) = lines.send(&serialized).await {
+                                if let Err(e) = framed_stream.send(&serialized).await {
                                     warn!("error sending response: {:?}", e);
                                 }
                             }
@@ -232,7 +202,7 @@ async fn handle_client(
                                 };
                                 let serialized = response.serialize();
 
-                                if let Err(e) = lines.send(serialized.as_str()).await {
+                                if let Err(e) = framed_stream.send(serialized.as_str()).await {
                                     warn!("error sending response: {:?}", e);
                                 }
                             }
