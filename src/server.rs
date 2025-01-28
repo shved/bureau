@@ -5,6 +5,7 @@ use futures::SinkExt;
 use socket2::{SockRef, TcpKeepalive};
 use std::error::Error;
 use std::future::Future;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Semaphore};
@@ -116,34 +117,35 @@ pub async fn run<S: Storage>(
         let clients_shutdown_tx = network_shutdown_tx.clone();
 
         async move {
+            let clients_cnt = Arc::new(AtomicI64::new(0));
+
             loop {
                 tokio::select! {
                 _ = network_shutdown_rx.recv() => {
                     info!("shutting down the server");
                     break;
                 }
-                permit = listener.permits.clone().acquire_owned() => {
-                        let permit = permit.unwrap();
-
-                        match listener.listener.accept().await {
+                socket = listener.listener.accept() => {
+                        match socket {
                             Ok((socket, _)) => {
                                 let req_tx = req_tx.clone();
                                 let client_shutdown_rx = clients_shutdown_tx.subscribe();
 
                                 if let Err(e) = apply_keep_alive_options(&socket) {
                                     error!("Setting up keep-alive options failed: {}", e);
-                                    drop(permit);
                                     continue;
                                 }
 
+                                clients_cnt.fetch_add(1, Ordering::Relaxed);
+                                let clients_cnt_to_dec = clients_cnt.clone();
+
                                 tokio::spawn(async move {
                                     handle_client(socket, req_tx, client_shutdown_rx).await;
-                                    drop(permit);
+                                    clients_cnt_to_dec.fetch_add(-1, Ordering::Relaxed);
                                 });
                             }
                             Err(e) => {
                                 error!("Error accepting connection: {:?}", e);
-                                drop(permit);
                             }
                         }
                     }
@@ -151,6 +153,9 @@ pub async fn run<S: Storage>(
             }
         }
     });
+
+    let engine_abort_handle = engine_handle.abort_handle();
+    let network_abort_handle = network_loop_handle.abort_handle();
 
     tokio::select! {
         _ = signal => {
@@ -179,6 +184,9 @@ pub async fn run<S: Storage>(
         .await?;
 
     let _ = engine_shutdown_tx.await?;
+
+    engine_abort_handle.abort();
+    network_abort_handle.abort();
 
     info!("bye!");
 

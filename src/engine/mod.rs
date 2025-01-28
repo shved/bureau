@@ -70,7 +70,7 @@ impl Engine {
         let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage)
             .unwrap_or_else(|e| panic!("Could not initialize dispatcher: {}", e));
 
-        let join_handle = tokio::spawn(async move {
+        let dispatcher_join_handle = tokio::spawn(async move {
             match disp.run().await {
                 Ok(()) => {
                     tracing::info!("dispatcher stoped");
@@ -79,11 +79,8 @@ impl Engine {
                     tracing::error!("dispatcher exited with error: {:?}", e);
                 }
             };
-            tracing::error!("dispatcher exited");
         });
-        tokio::spawn(async move {
-            tracing::error!("dispatcher exit: {:?}", join_handle.await);
-        });
+        let dispatcher_abort_handle = dispatcher_join_handle.abort_handle();
 
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
@@ -145,10 +142,13 @@ impl Engine {
                         .await;
                     let _ = disp_shutdown_tx.await?;
                     let _ = responder.send(Ok(()));
+                    dispatcher_abort_handle.abort();
                     return Ok(());
                 }
             };
         }
+
+        let _ = dispatcher_join_handle.await;
 
         Ok(())
     }
