@@ -126,6 +126,7 @@ pub async fn run<S: Storage>(
     let engine_abort_handle = engine_handle.abort_handle();
     let network_abort_handle = network_loop_handle.abort_handle();
 
+    // Block until either engine or network loop panic or shutdown signal comes.
     tokio::select! {
         _ = signal => {
             info!("shutdown signal received");
@@ -141,10 +142,24 @@ pub async fn run<S: Storage>(
         }
     }
 
-    while clients_cnt.load(Ordering::Relaxed) > 0 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    // Block until either all clients terminated or shutdown timeout comes.
+    let shutdown_timeout = Duration::from_secs(5);
+    let shutdown_deadline = tokio::time::sleep(shutdown_timeout);
+
+    tokio::select! {
+        _ = shutdown_deadline => {
+            warn!("forced shutdown after timeout");
+        }
+        _ = async {
+            while clients_cnt.load(Ordering::Relaxed) > 0 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        } => {
+            info!("all clients disconnected");
+        }
     }
 
+    // When all the network activity stoped tell the engine to stop.
     let (engine_shutdown_rx, engine_shutdown_tx) = oneshot::channel();
     engine_shutdown_command_tx
         .send(Command::Shutdown {
@@ -154,6 +169,7 @@ pub async fn run<S: Storage>(
 
     let _ = engine_shutdown_tx.await?;
 
+    // Abort long running tasks just in case.
     engine_abort_handle.abort();
     network_abort_handle.abort();
 
@@ -165,6 +181,7 @@ pub async fn run<S: Storage>(
 fn apply_socket_options(socket: &TcpStream) -> Result<(), std::io::Error> {
     socket.set_nodelay(true)?;
     let sock_ref = SockRef::from(&socket);
+    sock_ref.set_reuse_address(true)?;
     let mut ka = TcpKeepalive::new();
     ka = ka.with_time(Duration::from_secs(30));
     ka = ka.with_interval(Duration::from_secs(30));

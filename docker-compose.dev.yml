@@ -14,12 +14,14 @@ services:
     privileged: true
     ports:
       - "12650:12650"
-    restart: unless-stopped
+    restart: "no"
     tty: true
     stdin_open: false
     init: true
     logging:
       driver: "json-file"
-      # options:
-      #   max-size: "10m"          # Optional: Limit log size
-      #   max-file: "3"
+    stop_grace_period: 10s  # Give container time to shutdown gracefully
+    stop_signal: SIGINT    # Use SIGINT instead of default SIGTERM
+    # options:
+    #   max-size: "10m"          # Optional: Limit log size
+    #   max-file: "3"

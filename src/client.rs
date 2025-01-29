@@ -1,5 +1,6 @@
 use anyhow::Error;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -17,7 +18,22 @@ impl Client {
     }
 
     async fn reconnect(&mut self) -> std::result::Result<(), Error> {
-        self.conn = TcpStream::connect(&self.addr).await?;
+        let mut timeout_ms = 100;
+        let max_timeout_ms = 5000;
+
+        while timeout_ms < max_timeout_ms {
+            match TcpStream::connect(&self.addr).await {
+                Ok(conn) => {
+                    self.conn = conn;
+                    return Ok(());
+                }
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
+                    timeout_ms *= 2;
+                }
+            };
+        }
+
         Ok(())
     }
 
@@ -28,7 +44,7 @@ impl Client {
 
         let write_result = self.conn.write_all(msg.as_bytes()).await;
 
-        // Check if the connection was reset or terminated
+        // Check if the connection was reset or terminated.
         if let Err(e) = write_result {
             if is_connection_error(&e) {
                 self.reconnect().await?;
@@ -38,11 +54,11 @@ impl Client {
             }
         }
 
-        // Read the response
+        // Read the response.
         let mut buffer = vec![0; 4096];
         let read_result = self.conn.read(&mut buffer).await;
 
-        // Check if the connection was reset or terminated during reading
+        // Check if the connection was reset or terminated during reading.
         if let Err(e) = read_result {
             if is_connection_error(&e) {
                 self.reconnect().await?;
