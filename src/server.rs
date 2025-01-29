@@ -100,6 +100,7 @@ pub async fn run<S: Storage>(
 
                                 if clients_cnt.load(Ordering::Relaxed) >= max_conn as i64 {
                                     warn!("max connections reached, rejecting client");
+                                    drop(socket);
                                     continue;
                                 }
 
@@ -357,11 +358,12 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::mem;
+    use crate::{client::Client, storage::mem};
     use rand::{thread_rng, Rng};
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::{TcpListener, TcpStream};
+    use std::sync::Mutex;
+    use tokio::net::TcpListener;
     use tokio::signal;
+    use tokio::task::JoinHandle;
     use tracing_test::traced_test;
 
     #[traced_test]
@@ -380,47 +382,28 @@ mod tests {
             tracing::error!("server thread exited: {:?}", server_handle.await);
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = Client::connect(addr.to_string().as_str()).await.unwrap();
 
-        let entries_cnt = 4000;
-        let mut entries: Vec<(Bytes, Bytes)> = vec![];
-        for i in 0..entries_cnt {
-            let key = generate_valid_printable_key();
-            let value = generate_valid_printable_value();
-
-            entries.push((key.clone(), value.clone()));
-
+        let entries = generate_valid_entries(4000);
+        let entries_to_read = entries.clone();
+        for entry in entries {
             let cmd = format!(
                 "SET {} {}\n",
-                String::from_utf8_lossy(&key),
-                String::from_utf8_lossy(&value)
+                String::from_utf8_lossy(&entry.0),
+                String::from_utf8_lossy(&entry.1)
             );
 
-            let res = client.write_all(cmd.as_bytes()).await;
+            let res = client.send(cmd).await;
 
             assert!(
                 res.is_ok(),
-                "sending {}th SET request to server: {:?}",
-                i,
+                "sending SET request to server: {:?}",
                 res.err()
             );
-
-            // TODO: Rework all the in/out representation of data and put this assert back.
-            // For now it is broken because its hard to hanlde back slashes.
-            // let mut response = vec![0; 1024 * 4];
-            // let n = client.read(&mut response).await.unwrap();
-            // let response = String::from_utf8_lossy(&response[..n]).replace('\\', "");
-            // let expected_response = format!(
-            //     "set {} = b`{}`\n",
-            //     String::from_utf8_lossy(&key),
-            //     String::from_utf8_lossy(&value),
-            // )
-            // .replace('\\', "");
-            // assert_eq!(response, expected_response);
         }
 
-        let cmd = "invalid command";
-        let res = client.write_all(cmd.as_bytes()).await;
+        let cmd = "invalid command".to_owned();
+        let res = client.send(cmd).await;
 
         assert!(
             res.is_ok(),
@@ -428,10 +411,10 @@ mod tests {
             res.err()
         );
 
-        for entry in entries.clone() {
+        for entry in entries_to_read {
             let cmd = format!("GET {}\n", String::from_utf8_lossy(&entry.0),);
 
-            let res = client.write_all(cmd.as_bytes()).await;
+            let res = client.send(cmd).await;
 
             assert!(res.is_ok(), "writing GET request to server");
         }
@@ -440,7 +423,76 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_run_random_async() {
-        todo!();
+        // Initialize server.
+        let stor = mem::new();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap(); // Get the actual address
+
+        let server_handle = tokio::spawn(async move {
+            let server_result = run(listener, ConnLimit::Is(2), stor, signal::ctrl_c()).await;
+            assert!(server_result.is_ok());
+        });
+        tokio::spawn(async move {
+            tracing::error!("server thread exited: {:?}", server_handle.await);
+        });
+
+        let clients_with_data: Vec<(Client, Vec<(Bytes, Bytes)>)> = vec![
+            (
+                Client::connect(addr.to_string().as_str()).await.unwrap(),
+                generate_valid_entries(1000),
+            ),
+            (
+                Client::connect(addr.to_string().as_str()).await.unwrap(),
+                generate_valid_entries(1000),
+            ),
+            (
+                Client::connect(addr.to_string().as_str()).await.unwrap(),
+                generate_valid_entries(1000),
+            ),
+        ];
+
+        let handles: Mutex<Vec<JoinHandle<()>>> = Default::default();
+
+        for mut cwd in clients_with_data {
+            let client_handle = tokio::spawn(async move {
+                for entry in cwd.1 {
+                    let cmd = format!(
+                        "SET {} {}\n",
+                        String::from_utf8_lossy(&entry.0),
+                        String::from_utf8_lossy(&entry.1)
+                    );
+
+                    let res = cwd.0.send(cmd).await;
+
+                    assert!(
+                        res.is_ok(),
+                        "sending SET request to server: {:?}",
+                        res.err()
+                    );
+                }
+            });
+            handles.lock().unwrap().push(client_handle);
+        }
+
+        tokio::spawn(async {
+            tokio::time::sleep(Duration::from_millis(100)).await; // Small delay to ensure the task is ready
+            signal::ctrl_c().await.unwrap();
+        });
+
+        for h in handles.into_inner().unwrap() {
+            assert!(h.await.is_ok());
+        }
+    }
+
+    fn generate_valid_entries(count: usize) -> Vec<(Bytes, Bytes)> {
+        (0..count)
+            .map(|_| {
+                (
+                    generate_valid_printable_key(),
+                    generate_valid_printable_value(),
+                )
+            })
+            .collect()
     }
 
     fn generate_valid_printable_key() -> Bytes {

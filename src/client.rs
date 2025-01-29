@@ -19,7 +19,7 @@ impl Client {
 
     async fn reconnect(&mut self) -> std::result::Result<(), Error> {
         let mut timeout_ms = 100;
-        let max_timeout_ms = 5000;
+        let max_timeout_ms = 1000;
 
         while timeout_ms < max_timeout_ms {
             match TcpStream::connect(&self.addr).await {
