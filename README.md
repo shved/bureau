@@ -32,17 +32,22 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] rework memtable insert to probe size first
 - [x] make separate storage layer to abstract code that works with disk
 - [x] more unit tests
-- [ ] handle shutdown properly
+- [x] handle shutdown properly
+- [x] async test with few clients, test shutdown as well
+- [ ] clear in/out format, serialize response into just bytes array, not a formatted string
 - [ ] put logs to files
 - [ ] wal
-- [ ] add workflow for testcov
 - [ ] cache
 - [ ] compaction
+- [ ] build config from env at the server start
+- [ ] add workflow for testcov
+- [ ] performance testing
 - [ ] make bin crate alfa version
 - [ ] json response + schema
 - [ ] make a statistics unit
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
   - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram)
+- [ ] additional client commands: explicit connection termination, ping
 - [ ] replace bloomfilter with self implemented to guarantee serialized bloom size wont change
 - [ ] add key-prefix optimization to sst (keys are ordered so we could save space on the same prefix of several keys)
 

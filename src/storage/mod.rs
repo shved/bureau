@@ -76,6 +76,11 @@ impl crate::Storage for FsStorage {
             .write(false)
             .open(sstable_path(self.data_path.as_path(), table_id))
     }
+
+    fn close(&self) -> io::Result<()> {
+        // All file descriptiors will be dropped with drop semantics.
+        Ok(())
+    }
 }
 
 impl crate::StorageEntry for fs::File {

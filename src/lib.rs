@@ -1,4 +1,6 @@
-pub mod engine;
+pub mod client;
+mod engine;
+pub mod server;
 pub mod storage;
 
 use std::io;
@@ -27,6 +29,9 @@ pub trait Storage: Clone + Send + 'static {
 
     /// Opens SsTable to sequentially read it later.
     fn open(&self, table_id: &Uuid) -> io::Result<Self::Entry>;
+
+    /// Closes the storage. Can be used to flush buffers, free resources etc.
+    fn close(&self) -> io::Result<()>;
 }
 
 pub trait StorageEntry {

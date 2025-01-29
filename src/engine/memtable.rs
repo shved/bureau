@@ -27,6 +27,7 @@ pub enum ProbeResult {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 pub enum SsTableSize {
     Default,
     Is(usize),
@@ -87,11 +88,6 @@ impl MemTable {
         self.map.get(key).cloned()
     }
 
-    pub fn clear(&mut self) {
-        self.map.clear();
-        self.size = 0;
-    }
-
     /// A table that still has a room for one more huge entry is not considered full.
     pub fn is_full(&self) -> bool {
         if self.size > self.max_size - MAX_ENTRY_SIZE {
@@ -127,6 +123,7 @@ impl MemTable {
     }
 
     // Function exists for debug purposes to list all the keys in block.
+    #[allow(unused)]
     pub fn keys(&self) -> Vec<String> {
         let keys: Vec<String> = self
             .map
@@ -205,5 +202,12 @@ mod tests {
         let mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE));
         assert!(mt.will_overflow((block::BLOCK_BYTE_SIZE + 1) as u32));
         assert!(!mt.will_overflow(block::BLOCK_BYTE_SIZE as u32));
+    }
+
+    impl MemTable {
+        pub fn clear(&mut self) {
+            self.map.clear();
+            self.size = 0;
+        }
     }
 }
