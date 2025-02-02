@@ -19,6 +19,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 * I was skeptical about binary search in the block, since the block raw data is in memory and the data set is pretty small (less then 4KB of keys and values). But I've made a benchmark to see if gives any win against sequential read of key-value vector. The blocks I used for the bench was very optimistic and had only less then 100 elements so I was sure my assumption that sequential read will go better was correct. Benchmark showed that binary search was actually significantly better. For the case when the key is close to the end of the block it give 8x win. And even if the key is in the first 10% of the block it still gives 2x win against sequential read. This was the result I was not expecting at all so I've had no other option and did use the binary search for it.
 * This program intensively works with disk. I wanted it to be well tested and at the same time I did not want to rely on disk in tests. Didn't want to use any kind of dummy directory or utilize the `/tmp` to test it. To make it work, I've made all the disk calls isolated in a separate layer. There is a special Storage trait for it in lib file. For this trait there are two implementations, one for actual disk and the other just puts everything into structures to keep it in RAM. This approach allows to switch storage implementations with ease and don't deal with any traces in filesystem after test runs.
 * In process of working decided to add support for database to set values in fire-and-forget style. Database is made with write heavy loads in mind so this option could be useful for some clients.
+* I started with very basic and dumb protocol where messages are simply utf-8 strings separated by new line indicator. It has a bunch of limitations so I decided to make a simple binary protocol instead. It won't make any hashsum checks since the request is not stored anywhere, request cant be split into pieces and performance is a priority for requests. Again, protocol meant to be as simple as possible.
 
 ### TODOs
 - [x] change dump Arc 'database' to LSM with channels
@@ -34,7 +35,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] more unit tests
 - [x] handle shutdown properly
 - [x] async test with few clients, test shutdown as well
-- [ ] clear in/out format, serialize response into just bytes array, not a formatted string
+- [x] make clean binary protocol and upldate client to serialize requests and deserialize responses
 - [ ] put logs to files
 - [ ] wal
 - [ ] cache

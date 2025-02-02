@@ -1,5 +1,6 @@
 pub mod client;
 mod engine;
+mod protocol;
 pub mod server;
 pub mod storage;
 

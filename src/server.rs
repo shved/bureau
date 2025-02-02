@@ -1,4 +1,5 @@
 use crate::engine::{Command, Engine};
+use crate::protocol::{Messager, Request, Response};
 use crate::Storage;
 use bytes::Bytes;
 use futures::SinkExt;
@@ -8,11 +9,10 @@ use std::future::Future;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
-use tokio::sync::{mpsc, mpsc::Sender, oneshot};
+use tokio::sync::{broadcast, mpsc, mpsc::Sender, oneshot};
 use tokio::time::Duration;
 use tokio_stream::StreamExt;
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio_util::codec::Framed;
 use tracing::{error, info, warn};
 
 /// Maximum number of concurrent connections server will accept. When this limit is reached,
@@ -23,28 +23,9 @@ const MAX_CONN: usize = 128;
 /// says it should be set to somewhat higher then MAX_CONN value.
 const MAX_REQUESTS: usize = 512;
 
-/// Buffer of bytes for a single request. Taking into account keys and values size limits
-/// this number will do a fine job.
-const CODEC_BUFFER_SIZE: usize = 4096;
-
 pub enum ConnLimit {
     Default,
     Is(usize),
-}
-
-/// Request commands supported.
-// TODO: Make it all bytes. No real reason to have strings here.
-enum Request {
-    Get { key: String },
-    Set { key: String, value: String },
-}
-
-/// Possible responses structures.
-// TODO: Make it all bytes. No real reason to have strings here.
-enum Response {
-    Get { key: String, value: Bytes },
-    Set { key: String, value: Bytes },
-    Error { msg: String },
 }
 
 /// Starts db engine and loop that accepts and handles connection. Signal Future is used
@@ -198,32 +179,17 @@ async fn handle_client(
     sender: Sender<Command>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
-    let mut framed_stream = Framed::new(socket, LinesCodec::new_with_max_length(CODEC_BUFFER_SIZE));
+    let mut framed_stream = Framed::new(socket, Messager::default());
 
     loop {
         tokio::select! {
             result = framed_stream.next() => {
                 match result {
-                    Some(Ok(line)) => {
-                        match Request::parse(&line) {
-                            Ok(request) => {
-                                let response = handle_request(request, &sender).await;
-                                let serialized = response.serialize();
+                    Some(Ok(request)) => {
+                        let response = handle_request(request, &sender).await;
 
-                                if let Err(e) = framed_stream.send(&serialized).await {
-                                    warn!("error sending response: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                let response = Response::Error {
-                                    msg: format!("could not parse command: {}", e),
-                                };
-                                let serialized = response.serialize();
-
-                                if let Err(e) = framed_stream.send(serialized.as_str()).await {
-                                    warn!("error sending response: {:?}", e);
-                                }
-                            }
+                        if let Err(e) = framed_stream.send(response).await {
+                            warn!("error sending response: {:?}", e);
                         }
                     }
                     Some(Err(e)) => {
@@ -251,13 +217,15 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
             let (resp_tx, resp_rx) = oneshot::channel();
 
             let cmd = Command::Get {
-                key: Bytes::from(key.clone()),
+                key: key.clone(),
                 responder: resp_tx,
             };
 
             if let Err(e) = req_tx.send(cmd).await {
                 // TODO: Decorate errors for clients and log actual error.
-                return Response::Error { msg: e.to_string() };
+                return Response::Error {
+                    msg: Bytes::from(e.to_string()),
+                };
             }
 
             let resp = resp_rx.await;
@@ -265,7 +233,7 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
             if resp.is_err() {
                 // TODO: Decorate errors for clients and log actual error.
                 return Response::Error {
-                    msg: resp.err().unwrap().to_string(),
+                    msg: Bytes::from(resp.err().unwrap().to_string()),
                 };
             }
 
@@ -278,79 +246,37 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
                         value: value.clone(),
                     },
                     None => Response::Error {
-                        msg: "no value for given key".to_string(),
+                        msg: Bytes::from("no value for given key"),
                     },
                 },
-                Err(e) => Response::Error { msg: e.to_string() },
+                Err(e) => Response::Error {
+                    msg: Bytes::from(e.to_string()),
+                },
             }
         }
         Request::Set { key, value } => {
             let (resp_tx, resp_rx) = oneshot::channel();
 
             let cmd = Command::Set {
-                key: Bytes::from(key.clone()),
-                value: Bytes::from(value.clone()),
+                key: key.clone(),
+                value: value.clone(),
                 responder: Some(resp_tx),
             };
 
             if let Err(e) = req_tx.send(cmd).await {
-                return Response::Error { msg: e.to_string() };
+                return Response::Error {
+                    msg: Bytes::from(e.to_string()),
+                };
             }
 
             let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
 
             match resp {
-                Ok(_) => Response::Set {
-                    key,
-                    value: Bytes::from(value),
+                Ok(_) => Response::Set { key, value },
+                Err(e) => Response::Error {
+                    msg: Bytes::from(e.to_string()),
                 },
-                Err(e) => Response::Error { msg: e.to_string() },
             }
-        }
-    }
-}
-
-impl Request {
-    fn parse(input: &str) -> crate::Result<Request> {
-        let mut parts = input.splitn(3, ' ');
-        match parts.next() {
-            Some("GET") => {
-                let key = parts.next().ok_or("GET must be followed by a key")?;
-                if parts.next().is_some() {
-                    Err("GET's key must not be followed by anything")?
-                }
-                Ok(Request::Get {
-                    key: key.to_string(),
-                })
-            }
-            Some("SET") => {
-                let key = match parts.next() {
-                    Some(key) => key,
-                    None => Err("SET must be followed by a key")?,
-                };
-                let value = match parts.next() {
-                    Some(value) => value,
-                    None => Err("SET needs a value")?,
-                };
-                Ok(Request::Set {
-                    key: key.to_string(),
-                    value: value.to_string(),
-                })
-            }
-            Some(cmd) => Err(format!("unknown command: {}", cmd))?,
-            None => Err("empty input")?,
-        }
-    }
-}
-
-impl Response {
-    fn serialize(&self) -> String {
-        match *self {
-            Response::Get { ref key, ref value } => format!("{} = {:?}", key, value),
-            Response::Set { ref key, ref value } => {
-                format!("set {} = b`{:?}`", key, value)
-            }
-            Response::Error { ref msg } => format!("error: {}", msg),
         }
     }
 }
