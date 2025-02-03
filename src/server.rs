@@ -1,5 +1,5 @@
 use crate::engine::{Command, Engine};
-use crate::protocol::{Messager, Request, Response};
+use crate::protocol::{Request, Response, ServerMessenger};
 use crate::Storage;
 use bytes::Bytes;
 use futures::SinkExt;
@@ -179,7 +179,7 @@ async fn handle_client(
     sender: Sender<Command>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
-    let mut framed_stream = Framed::new(socket, Messager::default());
+    let mut framed_stream = Framed::new(socket, ServerMessenger::default());
 
     loop {
         tokio::select! {
@@ -224,7 +224,7 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
             if let Err(e) = req_tx.send(cmd).await {
                 // TODO: Decorate errors for clients and log actual error.
                 return Response::Error {
-                    msg: Bytes::from(e.to_string()),
+                    message: Bytes::from(e.to_string()),
                 };
             }
 
@@ -233,7 +233,7 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
             if resp.is_err() {
                 // TODO: Decorate errors for clients and log actual error.
                 return Response::Error {
-                    msg: Bytes::from(resp.err().unwrap().to_string()),
+                    message: Bytes::from(resp.err().unwrap().to_string()),
                 };
             }
 
@@ -241,16 +241,15 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
 
             match resp {
                 Ok(option) => match option {
-                    Some(value) => Response::Get {
-                        key,
+                    Some(value) => Response::OkValue {
                         value: value.clone(),
                     },
                     None => Response::Error {
-                        msg: Bytes::from("no value for given key"),
+                        message: Bytes::from("no value for given key"),
                     },
                 },
                 Err(e) => Response::Error {
-                    msg: Bytes::from(e.to_string()),
+                    message: Bytes::from(e.to_string()),
                 },
             }
         }
@@ -265,16 +264,16 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
 
             if let Err(e) = req_tx.send(cmd).await {
                 return Response::Error {
-                    msg: Bytes::from(e.to_string()),
+                    message: Bytes::from(e.to_string()),
                 };
             }
 
             let resp = resp_rx.await.unwrap(); // TODO: Remove unwrap();
 
             match resp {
-                Ok(_) => Response::Set { key, value },
+                Ok(_) => Response::Ok,
                 Err(e) => Response::Error {
-                    msg: Bytes::from(e.to_string()),
+                    message: Bytes::from(e.to_string()),
                 },
             }
         }
