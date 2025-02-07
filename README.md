@@ -44,7 +44,6 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] add workflow for testcov
 - [ ] performance testing
 - [ ] make bin crate alfa version
-- [ ] json response + schema
 - [ ] make a statistics unit
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
   - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram)
