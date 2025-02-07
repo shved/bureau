@@ -29,9 +29,11 @@ tokio-util = { version = "0.7.13", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
 uuid = { version = "1.13.1", features = ["v7"] }
+strum = { version = "0.26.3", features = ["derive"] }
 
 [dev-dependencies]
 criterion = "0.5.1"
 rand = "0.8.5"
 random-string = "1.1.0"
+strum = { version = "0.26.3", features = ["derive"] }
 tracing-test = "0.2.5"

@@ -569,8 +569,6 @@ mod tests {
                 .is_ok());
         }
 
-        let mut nones: Vec<Bytes> = vec![];
-
         for str in DATA {
             let (resp_tx, resp_rx) = oneshot::channel();
 
@@ -587,23 +585,10 @@ mod tests {
             assert!(resp.is_ok(), "engine returned an error: {:?}", resp);
 
             let resp = resp.unwrap();
-            if resp.is_none() {
-                nones.push(Bytes::from(str));
-            }
+            assert!(resp.is_some(), "response have to be some but none returned");
+            let resp = resp.unwrap();
+            assert_eq!(resp, Bytes::from(str));
         }
-
-        // DEBUG
-        if !nones.is_empty() {
-            debug!("missing keys: {:?}", nones);
-        }
-        // END DEBUG
-
-        assert!(
-            nones.is_empty(),
-            "there are {} values missing out of {}",
-            nones.len(),
-            DATA.len(),
-        );
 
         // Try to get value that is not present and should be none.
         let (resp_tx, resp_rx) = oneshot::channel();

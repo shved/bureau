@@ -1,4 +1,5 @@
 use bureau::client::Client;
+use bureau::protocol::Request;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -24,6 +25,13 @@ async fn main() {
 
     let mut client = Client::connect(args.address.as_str()).await.unwrap();
 
-    let response = client.send(args.command).await.unwrap();
-    println!("Received: {}", String::from_utf8_lossy(&response));
+    match Request::from_string(args.command) {
+        Ok(cmd) => {
+            let response = client.send(cmd).await.unwrap();
+            println!("Received: {}", response);
+        }
+        Err(e) => {
+            println!("Client error: {}", e);
+        }
+    }
 }
