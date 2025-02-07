@@ -88,11 +88,11 @@ impl ResponseStatus {
 
 /*
 Request message layout schema.
---------------------------------------------------------------------------------------------
-| Message Size (LNG_SEC)| Mode | Key Size | Key | Value Size (Optional) | Value (Optional) |
---------------------------------------------------------------------------------------------
-|          2B           |  1B  |    2B    | ... |          2B           |       ...        |
---------------------------------------------------------------------------------------------
+-----------------------------------
+| Message Size (LNG_SEC)| Payload |
+-----------------------------------
+|          2B           |   ...   |
+-----------------------------------
 */
 impl Decoder for ServerMessenger {
     type Item = Request;
@@ -142,7 +142,7 @@ impl Decoder for ServerMessenger {
 }
 
 /*
-Request layout schema.
+Request payload layout schema.
 --------------------------------------------------------------------
 | Mode | Key Size | Key | Value Size (Optional) | Value (Optional) |
 --------------------------------------------------------------------
@@ -150,7 +150,6 @@ Request layout schema.
 --------------------------------------------------------------------
 */
 impl Request {
-    /// Parses protocol message into a Request object.
     fn parse(raw: &[u8]) -> crate::Result<Self> {
         if raw.len() < 4 {
             return Err("message invalid".into());
@@ -254,12 +253,12 @@ impl Request {
 }
 
 /*
-Response layout schema.
------------------------------------------------------------------------------
-| Message Size (LNG_SEC)| Status | Value Size (Optional) | Value (Optional) |
------------------------------------------------------------------------------
-|          2B           |   1B   |          2B           |       ...        |
------------------------------------------------------------------------------
+Response message layout schema.
+-----------------------------------
+| Message Size (LNG_SEC)| Payload |
+-----------------------------------
+|          2B           |   ...   |
+-----------------------------------
 */
 impl Encoder<Response> for ServerMessenger {
     type Error = std::io::Error;
@@ -300,11 +299,11 @@ impl Encoder<Response> for ServerMessenger {
 
 /*
 Response message layout schema.
------------------------------------------------------------------------------
-| Message Size (LNG_SEC)| Status | Value Size (Optional) | Value (Optional) |
------------------------------------------------------------------------------
-|          2B           |   1B   |          2B           |       ...        |
------------------------------------------------------------------------------
+-----------------------------------
+| Message Size (LNG_SEC)| Payload |
+-----------------------------------
+|          2B           |   ...   |
+-----------------------------------
 */
 impl Decoder for ClientMessenger {
     type Item = Response;
@@ -354,7 +353,7 @@ impl Decoder for ClientMessenger {
 }
 
 /*
-Response layout schema.
+Response payload layout schema.
 -----------------------------------------------------
 | Status | Value Size (Optional) | Value (Optional) |
 -----------------------------------------------------
@@ -422,12 +421,12 @@ impl Response {
 }
 
 /*
-Request layout schema.
---------------------------------------------------------------------------------------------
-| Message Size (LNG_SEC)| Mode | Key Size | Key | Value Size (Optional) | Value (Optional) |
---------------------------------------------------------------------------------------------
-|          2B           |  1B  |    2B    | ... |          2B           |       ...        |
---------------------------------------------------------------------------------------------
+Request message layout schema.
+-----------------------------------
+| Message Size (LNG_SEC)| Payload |
+-----------------------------------
+|          2B           |   ...   |
+-----------------------------------
 */
 impl Encoder<Request> for ClientMessenger {
     type Error = std::io::Error;
