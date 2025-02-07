@@ -197,7 +197,7 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
 mod tests {
     use super::*;
     use crate::storage::mem;
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     use tracing::debug;
     use tracing_test::traced_test;
 
@@ -686,16 +686,16 @@ mod tests {
     }
 
     fn generate_valid_key() -> Bytes {
-        let mut rng = thread_rng();
-        let length = rng.gen_range(1..=MAX_KEY_SIZE);
-        let random_bytes: Vec<u8> = (0..length).map(|_| rng.gen()).collect();
+        let mut rng = rng();
+        let length = rng.random_range(1..=MAX_KEY_SIZE);
+        let random_bytes: Vec<u8> = (0..length).map(|_| rng.random()).collect();
         Bytes::from(random_bytes)
     }
 
     fn generate_valid_value() -> Bytes {
-        let mut rng = thread_rng();
-        let length = rng.gen_range(1..=MAX_VALUE_SIZE);
-        let random_bytes: Vec<u8> = (0..length).map(|_| rng.gen()).collect();
+        let mut rng = rng();
+        let length = rng.random_range(1..=MAX_VALUE_SIZE);
+        let random_bytes: Vec<u8> = (0..length).map(|_| rng.random()).collect();
         Bytes::from(random_bytes)
     }
 

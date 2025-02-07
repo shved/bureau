@@ -285,7 +285,7 @@ mod tests {
     use super::*;
     use crate::protocol::Request;
     use crate::{client::Client, storage::mem};
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     use std::sync::Mutex;
     use tokio::net::TcpListener;
     use tokio::signal;
@@ -423,21 +423,21 @@ mod tests {
     }
 
     fn generate_valid_printable_key() -> Bytes {
-        let mut rng = thread_rng();
-        let length = rng.gen_range(1..=300);
+        let mut rng = rng();
+        let length = rng.random_range(1..=300);
         Bytes::from(
             (0..length)
-                .map(|_| rng.gen_range(32..=126) as u8)
+                .map(|_| rng.random_range(32..=126) as u8)
                 .collect::<Vec<u8>>(),
         )
     }
 
     fn generate_valid_printable_value() -> Bytes {
-        let mut rng = thread_rng();
-        let length = rng.gen_range(1..=1000);
+        let mut rng = rng();
+        let length = rng.random_range(1..=1000);
         Bytes::from(
             (0..length)
-                .map(|_| rng.gen_range(32..=126) as u8)
+                .map(|_| rng.random_range(32..=126) as u8)
                 .collect::<Vec<u8>>(),
         )
     }
