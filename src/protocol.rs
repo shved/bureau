@@ -215,14 +215,14 @@ impl Request {
 
         let command_switch = parts.next().ok_or(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "client error: no command given",
+            "no command given",
         ))?;
 
         match command_switch {
             "GET" => {
                 let key_str = parts.next().ok_or(io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "client error: no key provided with GET request",
+                    "no key provided with GET request",
                 ))?;
 
                 Ok(Request::Get {
@@ -232,12 +232,12 @@ impl Request {
             "SET" => {
                 let key_str = parts.next().ok_or(io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "client error: no key provided with SET request",
+                    "no key provided with SET request",
                 ))?;
 
                 let value_str = parts.next().ok_or(io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "client error: no value provided with SET request",
+                    "no value provided with SET request",
                 ))?;
 
                 Ok(Request::Set {
@@ -247,7 +247,7 @@ impl Request {
             }
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "client error: invalid command switch",
+                "invalid command switch",
             )),
         }
     }

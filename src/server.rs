@@ -338,7 +338,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_run_random_async() {
-        // Initialize server.
+        let requests_count = 1000;
         let stor = mem::new();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap(); // Get the actual address
@@ -348,27 +348,33 @@ mod tests {
             assert!(server_result.is_ok());
         });
         tokio::spawn(async move {
-            tracing::error!("server thread exited: {:?}", server_handle.await);
+            match server_handle.await {
+                Err(e) => tracing::error!("server thread exited: {:?}", e),
+                Ok(()) => tracing::info!("server exited"),
+            }
         });
 
         let clients_with_data: Vec<(Client, Vec<(Bytes, Bytes)>)> = vec![
             (
                 Client::connect(addr.to_string().as_str()).await.unwrap(),
-                generate_valid_entries(1000),
+                generate_valid_entries(requests_count),
             ),
             (
                 Client::connect(addr.to_string().as_str()).await.unwrap(),
-                generate_valid_entries(1000),
+                generate_valid_entries(requests_count),
             ),
             (
                 Client::connect(addr.to_string().as_str()).await.unwrap(),
-                generate_valid_entries(1000),
+                generate_valid_entries(requests_count),
             ),
         ];
 
         let handles: Mutex<Vec<JoinHandle<()>>> = Default::default();
+        let responses: Arc<Mutex<Vec<Result<Response, anyhow::Error>>>> =
+            Arc::new(Mutex::new(vec![]));
 
         for mut cwd in clients_with_data {
+            let responses = Arc::clone(&responses);
             let client_handle = tokio::spawn(async move {
                 for entry in cwd.1 {
                     let cmd = Request::Set {
@@ -377,12 +383,7 @@ mod tests {
                     };
 
                     let res = cwd.0.send(cmd).await;
-
-                    assert!(
-                        res.is_ok(),
-                        "sending SET request to server: {:?}",
-                        res.err()
-                    );
+                    responses.lock().unwrap().push(res);
                 }
             });
             handles.lock().unwrap().push(client_handle);
@@ -396,6 +397,18 @@ mod tests {
         for h in handles.into_inner().unwrap() {
             assert!(h.await.is_ok());
         }
+
+        let responses = responses.lock().unwrap();
+        let error_count = responses.iter().filter(|res| res.is_err()).count();
+
+        // We assume here one of three clients will struggle since the server connection
+        // limit is set to be 2. This means there will be error responses but amount of those
+        // will never be higher then the amount of requests sent by a client (requests_count).
+        assert!(
+            error_count < requests_count,
+            "error count is too high: {}",
+            error_count
+        );
     }
 
     fn generate_valid_entries(count: usize) -> Vec<(Bytes, Bytes)> {

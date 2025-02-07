@@ -31,7 +31,7 @@ async fn main() {
             println!("Received: {}", response);
         }
         Err(e) => {
-            println!("Received: {}", e);
+            println!("Client error: {}", e);
         }
     }
 }

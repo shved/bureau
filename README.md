@@ -35,7 +35,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] more unit tests
 - [x] handle shutdown properly
 - [x] async test with few clients, test shutdown as well
-- [x] make clean binary protocol and upldate client to serialize requests and deserialize responses
+- [x] make clean binary protocol instead of dummy line based protocol
 - [ ] put logs to files
 - [ ] wal
 - [ ] cache
