@@ -283,6 +283,7 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::Request;
     use crate::{client::Client, storage::mem};
     use rand::{thread_rng, Rng};
     use std::sync::Mutex;
@@ -312,12 +313,10 @@ mod tests {
         let entries = generate_valid_entries(4000);
         let entries_to_read = entries.clone();
         for entry in entries {
-            let cmd = format!(
-                "SET {} {}\n",
-                String::from_utf8_lossy(&entry.0),
-                String::from_utf8_lossy(&entry.1)
-            );
-
+            let cmd = Request::Set {
+                key: entry.0,
+                value: entry.1,
+            };
             let res = client.send(cmd).await;
 
             assert!(
@@ -327,17 +326,8 @@ mod tests {
             );
         }
 
-        let cmd = "invalid command".to_owned();
-        let res = client.send(cmd).await;
-
-        assert!(
-            res.is_ok(),
-            "sending invalid request to server: {:?}",
-            res.err()
-        );
-
         for entry in entries_to_read {
-            let cmd = format!("GET {}\n", String::from_utf8_lossy(&entry.0),);
+            let cmd = Request::Get { key: entry.0 };
 
             let res = client.send(cmd).await;
 
@@ -381,11 +371,10 @@ mod tests {
         for mut cwd in clients_with_data {
             let client_handle = tokio::spawn(async move {
                 for entry in cwd.1 {
-                    let cmd = format!(
-                        "SET {} {}\n",
-                        String::from_utf8_lossy(&entry.0),
-                        String::from_utf8_lossy(&entry.1)
-                    );
+                    let cmd = Request::Set {
+                        key: entry.0,
+                        value: entry.1,
+                    };
 
                     let res = cwd.0.send(cmd).await;
 
@@ -400,7 +389,7 @@ mod tests {
         }
 
         tokio::spawn(async {
-            tokio::time::sleep(Duration::from_millis(100)).await; // Small delay to ensure the task is ready
+            tokio::time::sleep(Duration::from_millis(100)).await;
             signal::ctrl_c().await.unwrap();
         });
 

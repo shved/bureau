@@ -25,7 +25,7 @@ async fn main() {
 
     let mut client = Client::connect(args.address.as_str()).await.unwrap();
 
-    match Request::from_string_input(args.command) {
+    match Request::from_string(args.command) {
         Ok(cmd) => {
             let response = client.send(cmd).await.unwrap();
             println!("Received: {}", response);
