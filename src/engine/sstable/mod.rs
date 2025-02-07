@@ -252,7 +252,7 @@ mod tests {
     use crate::storage::mem;
     use crate::Storage;
     use bytes::Bytes;
-    use rand::seq::SliceRandom;
+    use rand::seq::IndexedRandom;
     use tracing::debug;
     use tracing_test::traced_test;
 
@@ -271,7 +271,7 @@ mod tests {
                 ProbeResult::Full => {
                     let internal_map = mt.map.clone();
                     let keys = internal_map.keys().cloned().collect::<Vec<Bytes>>();
-                    let key = keys.choose(&mut rand::thread_rng()).unwrap();
+                    let key = keys.choose(&mut rand::rng()).unwrap();
                     let value = internal_map.get(key);
                     let value = value.unwrap();
 
