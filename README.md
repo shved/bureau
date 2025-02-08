@@ -4,6 +4,7 @@ Bureau is the key-value database based on LSM tree. The project has two goals. F
 - does not support any authentication facility
 - does not support multiple databases or privileges
 - it is built for Linux (and may be Unix) systems only
+- no backward compatibility guarantees: protocol and files formats are to be broken at any moment
 
 ### Case study
 Here goes the list of the most peculiar and fun stuff I've met so far doing this project.
