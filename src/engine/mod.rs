@@ -1,16 +1,19 @@
 mod dispatcher;
 pub mod memtable;
 mod sstable;
-mod wal;
 
 use crate::engine::memtable::{MemTable, SsTableSize};
-use crate::{Responder, Result, Storage};
+use crate::wal::Wal;
+use crate::{Responder, Result, Storage, WalStorage};
 use bytes::Bytes;
 use dispatcher::Dispatcher;
 use tokio::sync::{mpsc, oneshot};
+use tracing::error;
 
 /// This is where data files will be stored.
-pub const DATA_PATH: &str = "/var/lib/bureau"; // TODO: Make configurable.
+// TODO: Make configurable.
+// TODO: Move to storage may be.
+pub const DATA_PATH: &str = "/var/lib/bureau";
 
 /// This is how many tables are allowed to be in the process of writing to disk at the same time.
 /// Grow this number to make DB more tolerant to high amount writes, it will consume more memory
@@ -41,34 +44,33 @@ pub enum Command {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
-pub struct Engine {
+pub struct Engine<W: WalStorage> {
     input_rx: mpsc::Receiver<Command>,
     memtable: MemTable,
-    wal: wal::Wal,
+    wal: Wal<W>,
 }
 
 /// Engine is a working horse of the database. It holds memtable and a channel to communicate commands to.
-impl Engine {
-    pub fn new(rx: mpsc::Receiver<Command>) -> Self {
-        Engine {
+impl<W: WalStorage> Engine<W> {
+    pub fn new(rx: mpsc::Receiver<Command>, wal_storage: W) -> Result<Self> {
+        let (wal, initial_records) = Wal::init(wal_storage)?;
+        let mt = MemTable::new(SsTableSize::Default, Some(initial_records));
+
+        Ok(Engine {
             input_rx: rx,
-            memtable: MemTable::new(SsTableSize::Default),
-            wal: wal::Wal {},
-        }
+            memtable: mt,
+            wal,
+        })
     }
 
     /// This function is to run in the background thread, to read and handle commands from
     /// the channel. It itself also spawns a dispathcher thread that works with everything
-    /// living on the disk.
+    /// living on the disk. Thats why storage is being passed here, hense it is not 'belong'
+    /// to engine directly.
     pub async fn run<T: Storage>(mut self, storage: T) -> Result<()> {
-        storage
-            .bootstrap()
-            .unwrap_or_else(|e| panic!("Could not setup storage: {}", e));
-
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
         let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage)
-            .unwrap_or_else(|e| panic!("Could not initialize dispatcher: {}", e));
+            .map_err(|e| format!("could not initialize dispatcher: {}", e))?;
 
         let dispatcher_join_handle = tokio::spawn(async move {
             match disp.run().await {
@@ -109,12 +111,27 @@ impl Engine {
 
                     match self.memtable.probe(&key, &value) {
                         memtable::ProbeResult::Available(new_size) => {
+                            if let Err(e) = self.wal.append(key.clone(), value.clone()) {
+                                error!("could not append wal entry: {}", e);
+                                continue;
+                            };
                             self.memtable.insert(key, value, Some(new_size));
                             responder.and_then(|r| r.send(Ok(())).ok());
                         }
                         memtable::ProbeResult::Full => {
                             // Swap tables and respond to client first.
                             let old_table = self.swap_table();
+                            if let Err(e) = self.wal.rotate() {
+                                // This database is not to run without WAL since it's LSM and bunch of data lives
+                                // in memroty, hence any restart without working WAL will lead to data loss.
+                                // Thats why we return here, shutting down engine with error.
+                                error!("could not rotate WAL: {}", e);
+                                return Err(e.into());
+                            };
+                            if let Err(e) = self.wal.append(key.clone(), value.clone()) {
+                                error!("could not append wal entry: {}", e);
+                                continue;
+                            };
                             self.memtable.insert(key, value, None);
                             responder.and_then(|r| r.send(Ok(())).ok());
 
@@ -141,6 +158,8 @@ impl Engine {
                         })
                         .await;
                     let _ = disp_shutdown_tx.await?;
+                    self.wal.flush()?;
+
                     let _ = responder.send(Ok(()));
                     dispatcher_abort_handle.abort();
                     return Ok(());
@@ -166,8 +185,7 @@ impl Engine {
 
     /// Swaps memtable with fresh one and sends full table to dispatcher that syncronously write it to disk.
     fn swap_table(&mut self) -> MemTable {
-        // TODO: When SSTable is written WAL should be rotated.
-        let mut swapped = MemTable::new(SsTableSize::Default);
+        let mut swapped = MemTable::new(SsTableSize::Default, None);
         std::mem::swap(&mut self.memtable, &mut swapped);
         swapped
     }
@@ -197,6 +215,7 @@ fn validate(key: &Bytes, value: &Bytes) -> crate::Result<()> {
 mod tests {
     use super::*;
     use crate::storage::mem;
+    use crate::wal::mem_storage::{InitialState, MemStorage};
     use rand::{rng, Rng};
     use tracing::debug;
     use tracing_test::traced_test;
@@ -546,8 +565,9 @@ mod tests {
     async fn test_run_with_fixtures() {
         // Initialize engine.
         let stor = mem::new();
+        let wal_stor = MemStorage::init(InitialState::Blank).unwrap();
         let (req_tx, req_rx) = mpsc::channel(64);
-        let engine = Engine::new(req_rx);
+        let engine = Engine::new(req_rx, wal_stor).unwrap();
 
         tokio::spawn(async move {
             if let Err(e) = engine.run(stor).await {
@@ -613,6 +633,30 @@ mod tests {
             missing_key,
             resp
         );
+
+        // TODO: Remake mem WAL storage to be wrapped in Arc to be able to get its state
+        // before shutdown and test recover records from WAL.
+        //
+        // Shutdown engine.
+        // let stored_data = wal_stor.logs();
+        // let (engine_shutdown_rx, engine_shutdown_tx) = oneshot::channel();
+        // assert!(req_tx
+        //     .send(Command::Shutdown {
+        //         responder: engine_shutdown_rx,
+        //     })
+        //     .await
+        //     .is_ok());
+
+        // assert!(engine_shutdown_tx.await.is_ok());
+
+        // // Start engine again to check if state will be restored.
+        // let (req_tx, req_rx) = mpsc::channel(64);
+        // let engine = Engine::new(req_rx, wal_stor).unwrap();
+        // tokio::spawn(async move {
+        //     if let Err(e) = engine.run(stor).await {
+        //         panic!("engine exited with error: {:?}", e);
+        //     };
+        // });
     }
 
     #[traced_test]
@@ -620,8 +664,9 @@ mod tests {
     async fn test_run_random_generated() {
         // Initialize engine.
         let stor = mem::new();
+        let wal_stor = MemStorage::init(InitialState::Blank).unwrap();
         let (req_tx, req_rx) = mpsc::channel(64);
-        let engine = Engine::new(req_rx);
+        let engine = Engine::new(req_rx, wal_stor).unwrap();
         tokio::spawn(async move {
             if let Err(e) = engine.run(stor).await {
                 panic!("engine exited with error: {:?}", e);

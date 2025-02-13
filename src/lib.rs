@@ -3,7 +3,9 @@ mod engine;
 pub mod protocol;
 pub mod server;
 pub mod storage;
+pub mod wal;
 
+use bytes::Bytes;
 use std::io;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -38,4 +40,23 @@ pub trait Storage: Clone + Send + 'static {
 pub trait StorageEntry {
     /// Reads at exactly given position for the length of given vector.
     fn read_at(&self, data: &mut Vec<u8>, position: u64) -> io::Result<()>;
+}
+
+pub trait WalStorage: Send + 'static
+where
+    Self: Sized,
+{
+    type LogPath;
+
+    /// Setup storage and pick up existing records if found.
+    fn init(path: Self::LogPath) -> io::Result<Self>;
+
+    /// Returns unfinished log as a blob if any.
+    fn persisted_data(&mut self) -> io::Result<Option<Bytes>>;
+
+    /// Append data to WAL.
+    fn append(&mut self, buf: bytes::Bytes) -> io::Result<()>;
+
+    /// Changes underlying WAL generation (e.g. file).
+    fn rotate(&mut self) -> io::Result<()>;
 }

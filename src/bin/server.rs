@@ -1,4 +1,7 @@
-use bureau::{server, server::ConnLimit, storage, storage::DataPath};
+use bureau::wal::fs_storage::{FsStorage, LogPath};
+use bureau::WalStorage;
+use bureau::{server, server::ConnLimit};
+use bureau::{storage, storage::DataPath};
 use std::env;
 use std::error::Error;
 use tokio::net::TcpListener;
@@ -18,10 +21,19 @@ async fn main() -> bureau::Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| "127.0.0.1:12650".to_string());
 
     let stor = storage::new(DataPath::Default);
+    let wal_stor = FsStorage::init(LogPath::Default)?;
     let listener = TcpListener::bind(&addr).await?;
 
     info!("Listening on: {}", addr);
-    if let Err(e) = server::run(listener, ConnLimit::Default, stor, signal::ctrl_c()).await {
+    if let Err(e) = server::run(
+        listener,
+        ConnLimit::Default,
+        stor,
+        wal_stor,
+        signal::ctrl_c(),
+    )
+    .await
+    {
         error!("server exited: {}", e);
         std::process::exit(1);
     }
