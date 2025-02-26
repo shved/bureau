@@ -1,6 +1,6 @@
 use crate::engine;
 use crate::engine::sstable::block;
-use crate::engine::wal::Wal;
+use crate::wal::Entry;
 use bytes::Bytes;
 use std::collections::btree_map::BTreeMap;
 
@@ -13,7 +13,7 @@ const MAX_ENTRY_SIZE: u32 = engine::MAX_KEY_SIZE + engine::MAX_VALUE_SIZE + bloc
 /// every time a key is added or being updated. Number of blocks in the table and its final size are nor strict
 /// numbers nor guaranteed. What really matters is that we have blocks that are 4Kb (a memory page) in size
 /// and that we want minimize blocks padding (zeroes at the end of a block) if possible.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone)] // TODO: Make clone only available in tests.
 pub struct MemTable {
     pub map: BTreeMap<Bytes, Bytes>,
     size: u32,
@@ -35,7 +35,7 @@ pub enum SsTableSize {
 
 impl MemTable {
     #[allow(clippy::new_without_default)]
-    pub fn new(size: SsTableSize) -> MemTable {
+    pub fn new(size: SsTableSize, initial_records: Option<Vec<Entry>>) -> MemTable {
         let max_size = match size {
             SsTableSize::Default => SSTABLE_BYTESIZE,
             SsTableSize::Is(size) => size as u32,
@@ -49,15 +49,27 @@ impl MemTable {
         // Numbers are arbitrary, not accurate but will result in a more consistent payload between blocks.
         let initial_size = (max_size / block::BLOCK_BYTE_SIZE as u32) * (engine::MAX_KEY_SIZE / 2);
 
-        MemTable {
+        let mut mt = MemTable {
             map: BTreeMap::new(),
             size: initial_size,
             max_size,
-        }
-    }
+        };
 
-    pub fn from_wal(_wal: Wal) -> MemTable {
-        todo!();
+        if let Some(initial_records) = initial_records {
+            for r in initial_records {
+                mt.insert(r.key, r.value, None);
+            }
+        }
+
+        // NOTE: This should never happen unless WAL was recorded on the instance with one
+        // memtable size limit and restored with this value being shrinked. In this case WAL
+        // could go above the memtable size limit.
+        assert!(
+            mt.size <= mt.max_size,
+            "memtable recovered from wal exceeded size limit"
+        );
+
+        mt
     }
 
     /// The only purpose of this function is to check weither given key and value will owerflow
@@ -143,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_is_full() {
-        let mut mt = MemTable::new(SsTableSize::Default);
+        let mut mt = MemTable::new(SsTableSize::Default, None);
         mt.size = mt.max_size - MAX_ENTRY_SIZE;
         assert!(!mt.is_full());
 
@@ -153,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_new_size() {
-        let mut mt = MemTable::new(SsTableSize::Default);
+        let mut mt = MemTable::new(SsTableSize::Default, None);
         let first_key = Bytes::from("foo");
         let first_value = Bytes::from("bar");
         let size = block::entry_size(&first_key, &first_value);
@@ -176,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        let mut mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE));
+        let mut mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE), None);
         assert_eq!(mt.size, 256);
 
         mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(256 + 12));
@@ -185,29 +197,56 @@ mod tests {
     }
 
     #[test]
-    fn test_clear() {
-        let mut mt = MemTable::new(SsTableSize::Default);
-        mt.insert(Bytes::from("foo"), Bytes::from("bar"), Some(12));
-        mt.insert(Bytes::from("bar"), Bytes::from("foo"), Some(24));
-
-        mt.clear();
-
-        assert_eq!(mt.size, 0);
-        assert!(mt.get(&Bytes::from("foo")).is_none());
-        assert!(mt.get(&Bytes::from("bar")).is_none());
-    }
-
-    #[test]
     fn test_will_overflow() {
-        let mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE));
+        let mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE), None);
         assert!(mt.will_overflow((block::BLOCK_BYTE_SIZE + 1) as u32));
         assert!(!mt.will_overflow(block::BLOCK_BYTE_SIZE as u32));
     }
 
-    impl MemTable {
-        pub fn clear(&mut self) {
-            self.map.clear();
-            self.size = 0;
-        }
+    #[test]
+    fn test_new_with_initial() {
+        let key_1 = Bytes::from("key1");
+        let key_2 = Bytes::from("key2");
+        let value = Bytes::from_iter((0..100).map(|_| 0u8));
+
+        let state: Vec<Entry> = vec![
+            Entry::encode(key_1.clone(), value.clone()),
+            Entry::encode(key_2.clone(), value.clone()),
+        ];
+
+        let mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE), Some(state));
+        let res = mt.get(&key_1);
+        assert!(res.is_some());
+        let res = res.unwrap();
+        assert_eq!(res, value);
+        let res = mt.get(&key_2);
+        assert!(res.is_some());
+        let res = res.unwrap();
+        assert_eq!(res, value);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_new_with_initial_panic() {
+        let state: Vec<Entry> = vec![
+            Entry::encode(
+                Bytes::from_iter((0..200).map(|_| 0u8)),
+                Bytes::from_iter((0..1000).map(|_| 0u8)),
+            ),
+            Entry::encode(
+                Bytes::from_iter((0..201).map(|_| 0u8)),
+                Bytes::from_iter((0..1000).map(|_| 0u8)),
+            ),
+            Entry::encode(
+                Bytes::from_iter((0..202).map(|_| 0u8)),
+                Bytes::from_iter((0..1000).map(|_| 0u8)),
+            ),
+            Entry::encode(
+                Bytes::from_iter((0..203).map(|_| 0u8)),
+                Bytes::from_iter((0..1000).map(|_| 0u8)),
+            ),
+        ];
+
+        let _ = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE), Some(state));
     }
 }

@@ -22,6 +22,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 * In process of working decided to add support for database to set values in fire-and-forget style. Database is made with write heavy loads in mind so this option could be useful for some clients.
 * I started with very basic and dumb protocol where messages are simply utf-8 strings separated by new line indicator. It has a bunch of limitations so I decided to make a simple binary protocol instead. It won't make any hashsum checks since the request is not stored anywhere, request cant be split into pieces and performance is a priority for requests. Again, protocol meant to be as simple as possible.
 * Because of how tokio_util framed protocols work, there is an opportunity for client to actually occupy the connection forever if they send not enough bytes for a request. By the protocol design every message starts with the payload length so the server will just continue checking the socket for new bytes coming. There is a workaound for it with tokio timeout function for futures, but I don't like it from the program behaviour perspective. And I also don't think this should be considered a problem. Just a curious thing that TCP idle timout won't help here.
+* Doing WAL I had to decide on the persistance strategy. I decided to go with the buffered writes. So WAL is adding records to buffer that is exactly disk page in size. For simplicity it just assumes the page is 4KB (even though this is not always true). To keep pages 4KB exactly there were two alternatives on the table. One to split the records whenever the buffer is full and second to add paddings of zeroes to buffer whenever the buffer is about to overflow. I decided to go with the second option even though it adds a bit of overhead to the data in size for paddings. First option would make it possible to have broken records in WAL and to recover from such a state it would be needed to have some kind of specieal 'recovery' mode. I decided to keep it simple for the end user.
 
 ### TODOs
 - [x] change dump Arc 'database' to LSM with channels
@@ -30,7 +31,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] index to track sstables
 - [x] forward 'get' to sstable index when no value in memtable
 - [x] rework cloning of a memtable to send just initilized table; remove persistent shadow table since there is no need for it
-- [x] add key value validations length (x > 0 && x < 256) and ascii
+- [x] add key value validations
 - [x] make CI setup with clippy, tests, and other things
 - [x] rework memtable insert to probe size first
 - [x] make separate storage layer to abstract code that works with disk
@@ -38,12 +39,13 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] handle shutdown properly
 - [x] async test with few clients, test shutdown as well
 - [x] make clean binary protocol instead of dummy line based protocol
-- [ ] wal
-- [ ] cache
+- [x] wal
 - [ ] compaction
+- [ ] cache
+- [ ] performance testing
+- [ ] move paddings and paging concerns from WAL to its fs storage
 - [ ] build config from env at the server start
 - [ ] add workflow for testcov
-- [ ] performance testing
 - [ ] make bin crate alfa version
 - [ ] make a statistics unit
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
@@ -51,4 +53,4 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] additional client commands: explicit connection termination, ping
 - [ ] replace bloomfilter with self implemented to guarantee serialized bloom size wont change
 - [ ] add key-prefix optimization to sst (keys are ordered so we could save space on the same prefix of several keys)
-
+- [ ] handle allocation fails with try_reserve to gracefully shut down in case of error

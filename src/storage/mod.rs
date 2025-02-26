@@ -34,7 +34,7 @@ impl crate::Storage for FsStorage {
 
     fn bootstrap(&self) -> io::Result<()> {
         if !self.data_path.exists() {
-            return fs::create_dir(self.data_path.as_path());
+            fs::create_dir(self.data_path.as_path())?;
         }
 
         Ok(())

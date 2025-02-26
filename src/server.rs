@@ -1,10 +1,9 @@
 use crate::engine::{Command, Engine};
 use crate::protocol::{Request, Response, ServerMessenger};
-use crate::Storage;
+use crate::{Storage, WalStorage};
 use bytes::Bytes;
 use futures::SinkExt;
 use socket2::{SockRef, TcpKeepalive};
-use std::error::Error;
 use std::future::Future;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -30,15 +29,21 @@ pub enum ConnLimit {
 
 /// Starts db engine and loop that accepts and handles connection. Signal Future is used
 /// to shutdown the whole thing. Connections are limited by a given capacity.
-pub async fn run<S: Storage>(
+pub async fn run<S: Storage, W: WalStorage>(
     listener: TcpListener,
     max_conn: ConnLimit,
-    stor: S,
+    storage: S,
+    wal_storage: W,
     signal: impl Future,
-) -> crate::Result<(), Box<dyn Error>> {
+) -> crate::Result<()> {
+    storage
+        .bootstrap()
+        .map_err(|e| format!("could not setup storage: {}", e))?;
+
     let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
     let engine_shutdown_command_tx = req_tx.clone();
-    let engine = Engine::new(req_rx);
+    let engine =
+        Engine::new(req_rx, wal_storage).map_err(|e| format!("could not setup engine: {}", e))?;
     let (network_shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let max_conn = match max_conn {
@@ -47,12 +52,12 @@ pub async fn run<S: Storage>(
     };
 
     let engine_handle = tokio::spawn(async move {
-        match engine.run(stor).await {
+        match engine.run(storage).await {
             Ok(()) => {
-                tracing::info!("engine stoped");
+                info!("engine stoped");
             }
             Err(e) => {
-                tracing::error!("engine exited with error: {:?}", e);
+                error!("engine exited with error: {:?}", e);
             }
         };
     });
@@ -115,11 +120,11 @@ pub async fn run<S: Storage>(
             let _ = network_shutdown_tx.send(());
         },
         res = engine_handle => {
-            tracing::error!("engine exited: {:?}", res);
+            error!("engine exited: {:?}", res);
             res?;
         },
         res = network_loop_handle => {
-            tracing::error!("network accept loop exited: {:?}", res);
+            error!("network accept loop exited: {:?}", res);
             res?;
         }
     }
@@ -284,6 +289,7 @@ async fn handle_request(request: Request, req_tx: &mpsc::Sender<Command>) -> Res
 mod tests {
     use super::*;
     use crate::protocol::Request;
+    use crate::wal::mem_storage::{InitialState, MemStorage};
     use crate::{client::Client, storage::mem};
     use rand::{rng, Rng};
     use std::sync::Mutex;
@@ -297,11 +303,13 @@ mod tests {
     async fn test_run_random_generated() {
         // Initialize server.
         let stor = mem::new();
+        let wal_stor = MemStorage::init(InitialState::Blank).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap(); // Get the actual address
 
         let server_handle = tokio::spawn(async move {
-            let server_result = run(listener, ConnLimit::Is(1), stor, signal::ctrl_c()).await;
+            let server_result =
+                run(listener, ConnLimit::Is(1), stor, wal_stor, signal::ctrl_c()).await;
             tracing::error!("server returned: {:?}", server_result);
         });
         tokio::spawn(async move {
@@ -340,11 +348,13 @@ mod tests {
     async fn test_run_random_async() {
         let requests_count = 1000;
         let stor = mem::new();
+        let wal_stor = MemStorage::init(InitialState::Blank).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap(); // Get the actual address
 
         let server_handle = tokio::spawn(async move {
-            let server_result = run(listener, ConnLimit::Is(2), stor, signal::ctrl_c()).await;
+            let server_result =
+                run(listener, ConnLimit::Is(2), stor, wal_stor, signal::ctrl_c()).await;
             assert!(server_result.is_ok());
         });
         tokio::spawn(async move {

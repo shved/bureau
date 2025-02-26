@@ -259,7 +259,7 @@ mod tests {
     /// Generates a full memtable that is filled with UUIDs as keys and values. Returns
     /// a memtable and a random pair of key and value present in the table.
     fn create_full_memtable(size: SsTableSize) -> (MemTable, Bytes, Bytes) {
-        let mut mt = MemTable::new(size);
+        let mut mt = MemTable::new(size, None);
         loop {
             // Fill it with random simple uuids.
             let key = Bytes::from(Uuid::now_v7().to_string());
