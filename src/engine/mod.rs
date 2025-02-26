@@ -124,7 +124,7 @@ impl<W: WalStorage> Engine<W> {
                             if let Err(e) = self.wal.rotate() {
                                 // This database is not to run without WAL since it's LSM and bunch of data lives
                                 // in memroty, hence any restart without working WAL will lead to data loss.
-                                // Thats why we return here, shutting down engine with error.
+                                // Thats why we return here shutting down engine with error.
                                 error!("could not rotate WAL: {}", e);
                                 return Err(e.into());
                             };
