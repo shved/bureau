@@ -728,6 +728,16 @@ mod tests {
             nones.len(),
             entries.len(),
         );
+
+        let (engine_shutdown_rx, engine_shutdown_tx) = oneshot::channel();
+        req_tx
+            .send(Command::Shutdown {
+                responder: engine_shutdown_rx,
+            })
+            .await
+            .unwrap();
+
+        let _ = engine_shutdown_tx.await.unwrap();
     }
 
     fn generate_valid_key() -> Bytes {
