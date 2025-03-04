@@ -35,7 +35,10 @@ pub async fn run<S: Storage, W: WalStorage>(
     storage: S,
     wal_storage: W,
     signal: impl Future,
-) -> crate::Result<()> {
+) -> crate::Result<()>
+where
+    <S as Storage>::Entry: Send,
+{
     storage
         .bootstrap()
         .map_err(|e| format!("could not setup storage: {}", e))?;
@@ -43,7 +46,7 @@ pub async fn run<S: Storage, W: WalStorage>(
     let (req_tx, req_rx) = mpsc::channel(MAX_REQUESTS);
     let engine_shutdown_command_tx = req_tx.clone();
     let engine =
-        Engine::new(req_rx, wal_storage).map_err(|e| format!("could not setup engine: {}", e))?;
+        Engine::init(req_rx, wal_storage).map_err(|e| format!("could not setup engine: {}", e))?;
     let (network_shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let max_conn = match max_conn {
@@ -185,6 +188,8 @@ async fn handle_client(
     mut shutdown: broadcast::Receiver<()>,
 ) {
     let mut framed_stream = Framed::new(socket, ServerMessenger::default());
+
+    info!("connection established");
 
     loop {
         tokio::select! {

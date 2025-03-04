@@ -27,7 +27,7 @@ pub trait Storage: Clone + Send + 'static {
     /// makes it properly work since sorting it will also order them in table creation time.
     fn list_entries(&self) -> io::Result<Vec<Uuid>>;
 
-    /// It writes a new SsTable to storage.
+    /// It writes SsTable to storage. If it is exist, call overwrites its contents.
     fn write(&self, table_id: &Uuid, data: &[u8]) -> io::Result<()>;
 
     /// Opens SsTable to sequentially read it later.
@@ -35,11 +35,17 @@ pub trait Storage: Clone + Send + 'static {
 
     /// Closes the storage. Can be used to flush buffers, free resources etc.
     fn close(&self) -> io::Result<()>;
+
+    /// Deletes entry. Exists for the tables that was shrinked to zero records.
+    fn delete(&self, table_id: &Uuid) -> io::Result<()>;
 }
 
 pub trait StorageEntry {
     /// Reads at exactly given position for the length of given vector.
-    fn read_at(&self, data: &mut Vec<u8>, position: u64) -> io::Result<()>;
+    fn read_at(&self, buf: &mut Vec<u8>, position: u64) -> io::Result<()>;
+
+    /// Length of entry in bytes.
+    fn read_all(&mut self, buf: &mut Vec<u8>) -> io::Result<()>;
 }
 
 pub trait WalStorage: Send + 'static

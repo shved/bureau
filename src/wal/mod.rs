@@ -30,7 +30,7 @@ pub struct Entry {
 impl<W: WalStorage> Wal<W> {
     /// If log has some records persisted, return them with the call so that engine can populate
     /// the records to the memtable as well.
-    pub fn init(storage: W) -> io::Result<(Self, Vec<Entry>)> {
+    pub fn init(storage: W) -> io::Result<(Self, Option<Vec<Entry>>)> {
         let mut wal = Self {
             buf: BytesMut::with_capacity(PAGE_SIZE),
             storage,
@@ -44,6 +44,12 @@ impl<W: WalStorage> Wal<W> {
                 };
             }
         }
+
+        let records = if records.is_empty() {
+            None
+        } else {
+            Some(records)
+        };
 
         Ok((wal, records))
     }
@@ -220,7 +226,7 @@ mod tests {
         let wal = Wal::init(mem);
         assert!(wal.is_ok());
         let (_, entries) = wal.unwrap();
-        assert!(entries.is_empty());
+        assert!(entries.is_none());
 
         let mut state = HashMap::new();
         let entries: Vec<Entry> = vec![
@@ -256,6 +262,8 @@ mod tests {
         let wal = Wal::init(mem);
         assert!(wal.is_ok());
         let (wal, entries) = wal.unwrap();
+        assert!(entries.is_some());
+        let entries = entries.unwrap();
         assert_eq!(entries.len(), 3);
         assert_eq!(wal.persisted_data(), state);
     }

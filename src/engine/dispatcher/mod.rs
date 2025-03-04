@@ -1,4 +1,4 @@
-mod compaction;
+pub mod compaction;
 mod index;
 
 use crate::engine::memtable::MemTable;
@@ -9,6 +9,7 @@ use index::Index;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub enum Command {
     Get {
         key: Bytes,
@@ -18,7 +19,7 @@ pub enum Command {
         data: MemTable,
         responder: Responder<()>,
     },
-    ReplaceTables(((Uuid, Uuid), Uuid)), // TODO: To be used by a compaction thread.
+    Update(Uuid, Option<MemTable>),
     Shutdown {
         responder: Responder<()>,
     },
@@ -46,7 +47,7 @@ impl<T: Storage> Dispatcher<T> {
         storage: T,
     ) -> std::result::Result<Self, anyhow::Error> {
         let mut entries = storage.list_entries()?;
-        let index = Index::init(&mut entries);
+        let index = Index::new(&mut entries);
 
         Ok(Dispatcher {
             cmd_rx,
@@ -99,9 +100,18 @@ impl<T: Storage> Dispatcher<T> {
                         let _ = responder.send(Ok(())); // If buffer is full, ack only when the table is on disk.
                     }
                 }
-                Command::ReplaceTables(((_old1, _old2), _new)) => {
-                    todo!()
-                }
+                Command::Update(id, mem_table) => match mem_table {
+                    None => {
+                        self.storage.delete(&id)?;
+                        self.index.delete(&id);
+                    }
+                    Some(memtable) => {
+                        let sstable = SsTable::build(memtable);
+                        let encoded = sstable.encode();
+
+                        self.storage.write(&id, &encoded)?;
+                    }
+                },
                 Command::Shutdown { responder } => {
                     let _ = self.storage.close();
                     let _ = responder.send(Ok(()));
@@ -114,7 +124,7 @@ impl<T: Storage> Dispatcher<T> {
     }
 
     fn persist_table(&self, data: MemTable) -> Uuid {
-        let table = SsTable::build(data);
+        let table = SsTable::build_full(data);
         let encoded_data = table.encode();
 
         // TODO: Actually handle when table can't be persisted.

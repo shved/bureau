@@ -3,7 +3,7 @@ pub mod mem;
 
 use crate::engine::DATA_PATH;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -81,11 +81,21 @@ impl crate::Storage for FsStorage {
         // All file descriptiors will be dropped with drop semantics.
         Ok(())
     }
+
+    fn delete(&self, table_id: &Uuid) -> io::Result<()> {
+        fs::remove_file(sstable_path(self.data_path.as_path(), table_id))
+    }
 }
 
 impl crate::StorageEntry for fs::File {
     fn read_at(&self, data: &mut Vec<u8>, position: u64) -> io::Result<()> {
         self.read_exact_at(data, position)?;
+
+        Ok(())
+    }
+
+    fn read_all(&mut self, buf: &mut Vec<u8>) -> io::Result<()> {
+        self.read_to_end(buf)?;
 
         Ok(())
     }

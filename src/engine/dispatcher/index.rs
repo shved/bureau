@@ -14,9 +14,9 @@ pub struct Entry {
 }
 
 /// Holds an ordered list of SSTables present on disk and ready for requests.
+/// Fresh tables come first, tails old tables.
 impl Index {
-    // TODO: Consider renaming it to new.
-    pub fn init(entries: &mut [Uuid]) -> Self {
+    pub fn new(entries: &mut [Uuid]) -> Self {
         // Seem to be not necessary here but tables set will not be too huge and index only needs
         // to be initialized once the database starts so it's fine if we end up doing extra work.
         entries.sort();
@@ -36,11 +36,42 @@ impl Index {
         self.entries.push(Entry { id });
         self.entries.extend(old);
     }
+
+    pub fn delete(&mut self, id: &Uuid) {
+        self.entries.retain(|e| &e.id != id);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_delete() {
+        let mut ids: Vec<Uuid> = vec![
+            Uuid::parse_str("01923000-9809-722f-b567-64f172b54f56").unwrap(),
+            Uuid::parse_str("01923000-4db5-71c9-8586-0554d2c9f956").unwrap(),
+            Uuid::parse_str("01923000-d486-705e-b6fe-f1dcf9cb01ae").unwrap(),
+            Uuid::parse_str("01922ffe-ff42-7a24-99af-69793801e519").unwrap(),
+            Uuid::parse_str("01923000-1551-71d1-96b0-4063addc3fcd").unwrap(),
+        ];
+
+        let mut index = Index::new(&mut ids);
+
+        index.delete(&Uuid::parse_str("01923000-9809-722f-b567-64f172b54f56").unwrap());
+        index.delete(&Uuid::parse_str("01923000-d486-705e-b6fe-f1dcf9cb01ae").unwrap());
+        index.delete(&Uuid::parse_str("01923000-1551-71d1-96b0-4063addc3fcd").unwrap());
+
+        assert_eq!(index.entries.len(), 2);
+        assert_eq!(
+            index.entries[0].id.to_string(),
+            "01923000-4db5-71c9-8586-0554d2c9f956"
+        );
+        assert_eq!(
+            index.entries[1].id.to_string(),
+            "01922ffe-ff42-7a24-99af-69793801e519"
+        );
+    }
 
     #[test]
     fn test_prepend() {
@@ -72,7 +103,8 @@ mod tests {
             Uuid::parse_str("01923000-1551-71d1-96b0-4063addc3fcd").unwrap(),
         ];
 
-        let index = Index::init(&mut ids);
+        let index = Index::new(&mut ids);
+
         assert_eq!(
             index.entries[0].id.to_string(),
             "01923000-d486-705e-b6fe-f1dcf9cb01ae"

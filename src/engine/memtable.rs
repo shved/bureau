@@ -1,8 +1,8 @@
 use crate::engine;
 use crate::engine::sstable::block;
-use crate::wal::Entry;
+use crate::wal;
 use bytes::Bytes;
-use std::collections::btree_map::BTreeMap;
+use std::collections::BTreeMap;
 
 pub const SSTABLE_BYTESIZE: u32 = 64 * 1024; // 64KB (16 blocks).
 const MAX_ENTRY_SIZE: u32 = engine::MAX_KEY_SIZE + engine::MAX_VALUE_SIZE + block::ENTRY_OVERHEAD;
@@ -33,9 +33,10 @@ pub enum SsTableSize {
     Is(usize),
 }
 
+// TODO: Make SsTableSize be divisible by blocks (disk pages).
 impl MemTable {
     #[allow(clippy::new_without_default)]
-    pub fn new(size: SsTableSize, initial_records: Option<Vec<Entry>>) -> MemTable {
+    pub fn new(size: SsTableSize, initial_records: Option<Vec<wal::Entry>>) -> Self {
         let max_size = match size {
             SsTableSize::Default => SSTABLE_BYTESIZE,
             SsTableSize::Is(size) => size as u32,
@@ -49,7 +50,7 @@ impl MemTable {
         // Numbers are arbitrary, not accurate but will result in a more consistent payload between blocks.
         let initial_size = (max_size / block::BLOCK_BYTE_SIZE as u32) * (engine::MAX_KEY_SIZE / 2);
 
-        let mut mt = MemTable {
+        let mut mt = Self {
             map: BTreeMap::new(),
             size: initial_size,
             max_size,
@@ -124,6 +125,15 @@ impl MemTable {
         let entry_size = block::entry_size(key, value);
 
         self.size - old_entry_size + entry_size
+    }
+
+    pub fn from_map(size: SsTableSize, map: &BTreeMap<Bytes, Bytes>) -> Self {
+        let mut mt = MemTable::new(size, None);
+        for (k, v) in map {
+            mt.insert(k.clone(), v.clone(), None);
+        }
+
+        mt
     }
 
     fn will_overflow(&self, new_size: u32) -> bool {
@@ -209,9 +219,9 @@ mod tests {
         let key_2 = Bytes::from("key2");
         let value = Bytes::from_iter((0..100).map(|_| 0u8));
 
-        let state: Vec<Entry> = vec![
-            Entry::encode(key_1.clone(), value.clone()),
-            Entry::encode(key_2.clone(), value.clone()),
+        let state: Vec<wal::Entry> = vec![
+            wal::Entry::encode(key_1.clone(), value.clone()),
+            wal::Entry::encode(key_2.clone(), value.clone()),
         ];
 
         let mt = MemTable::new(SsTableSize::Is(block::BLOCK_BYTE_SIZE), Some(state));
@@ -228,20 +238,20 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_new_with_initial_panic() {
-        let state: Vec<Entry> = vec![
-            Entry::encode(
+        let state: Vec<wal::Entry> = vec![
+            wal::Entry::encode(
                 Bytes::from_iter((0..200).map(|_| 0u8)),
                 Bytes::from_iter((0..1000).map(|_| 0u8)),
             ),
-            Entry::encode(
+            wal::Entry::encode(
                 Bytes::from_iter((0..201).map(|_| 0u8)),
                 Bytes::from_iter((0..1000).map(|_| 0u8)),
             ),
-            Entry::encode(
+            wal::Entry::encode(
                 Bytes::from_iter((0..202).map(|_| 0u8)),
                 Bytes::from_iter((0..1000).map(|_| 0u8)),
             ),
-            Entry::encode(
+            wal::Entry::encode(
                 Bytes::from_iter((0..203).map(|_| 0u8)),
                 Bytes::from_iter((0..1000).map(|_| 0u8)),
             ),

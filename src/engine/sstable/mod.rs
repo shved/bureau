@@ -8,6 +8,7 @@ use block::Block;
 use bloom::BloomSerializable;
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use uuid::Uuid;
 
@@ -16,7 +17,7 @@ SST layout schema. First section is to be read first to make the initial checks 
 ----------------------------------------------------------------------------------------------------------------------------
 | Bloom filter |                                Table Index                                    |       Blocks Section      |
 ----------------------------------------------------------------------------------------------------------------------------
-|  7717 Bytes  | Index len (2B) | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
+|  7718 Bytes  | Index len (2B) | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
 ----------------------------------------------------------------------------------------------------------------------------
 
 Table index entry layout.
@@ -35,7 +36,7 @@ const FIRST_READ_LEN: usize = bloom::ENCODED_LEN + std::mem::size_of::<u16>();
 const CHECKSUM_SIZE: usize = std::mem::size_of::<u32>(); // 4.
 
 /// SsTable is meant to be used the following way. Typical lifecicle of an instance
-/// can be described as a set of calls: build -> encode -> persist and then many lookups.
+/// can be described as a set of calls: build_full -> encode -> persist and then many lookups.
 #[derive(Debug)]
 pub struct SsTable {
     blocks: Vec<Block>,
@@ -44,9 +45,14 @@ pub struct SsTable {
 }
 
 impl SsTable {
-    pub fn build(src: MemTable) -> Self {
-        assert!(src.is_full(), "Flushing a memtable that is not full yet");
+    /// This function is only used to build new tables before saving them to disk.
+    pub fn build_full(src: MemTable) -> Self {
+        assert!(src.is_full(), "flushing memtable that is not full yet");
+        Self::build(src)
+    }
 
+    /// Builds an SsTable structure to encode and persist it.
+    pub fn build(src: MemTable) -> Self {
         let mut blocks = Vec::new();
         let mut bf = bloom::new();
         let mut cur_block = Block::new();
@@ -70,6 +76,7 @@ impl SsTable {
         }
     }
 
+    /// Makes a table into a vector of bytes.
     pub fn encode(&self) -> Vec<u8> {
         let mut offset = 0;
         let mut blocks_encoded = Vec::<u8>::new();
@@ -93,11 +100,41 @@ impl SsTable {
         content
     }
 
+    /// Makes a map from the given encoded table. Used in compaction to shrink duplicated data.
+    /// There is no need for MemTable to be returned since the only reason having map wrapped
+    /// by memtable is to track it's size. Since we only use decoded sstable to deduplicate data
+    /// what we actually want is an underlying map structure.
+    pub fn decode(blob: &mut impl StorageEntry) -> Result<BTreeMap<Bytes, Bytes>> {
+        let mut data = Vec::new();
+        blob.read_all(&mut data)?;
+        let index_len =
+            u16::from_be_bytes([data[bloom::ENCODED_LEN], data[bloom::ENCODED_LEN + 1]]);
+        let index_start = bloom::ENCODED_LEN;
+        let index_end = bloom::ENCODED_LEN + index_len as usize;
+        let index = TableIndex::decode(&data[index_start..index_end]);
+
+        let mut map = BTreeMap::new();
+
+        for ie in index.0 {
+            let block_start = index_end + ie.offset as usize;
+            let block = Block::decode(&data[block_start..block_start + block::BLOCK_BYTE_SIZE]);
+            for offset in block.offsets.iter() {
+                let key = block.parse_frame(*offset as usize);
+                let value = block.parse_frame(*offset as usize + 2 + key.len());
+                map.insert(key, value);
+            }
+        }
+
+        Ok(map)
+    }
+
     /// Generates a simple and time ordered uuid (v7).
     fn generate_id() -> Uuid {
         Uuid::now_v7()
     }
 
+    /// Touches table to find if the given key is in the table. First checks for bloom filter,
+    /// then index and then reads block of data needed. If key not found, returns None.
     pub fn lookup(blob: &impl StorageEntry, key: &Bytes) -> Result<Option<Bytes>> {
         if let (true, index_len) = Self::probe_bloom(blob, key)? {
             if let Some(offset) = Self::lookup_index(blob, index_len as usize, key)? {
@@ -124,6 +161,8 @@ impl SsTable {
         Ok((b.check(key), index_len))
     }
 
+    /// Checks table index for the key to find. If the key won't fall into any index section
+    /// Returns None.
     fn lookup_index(blob: &impl StorageEntry, len: usize, key: &Bytes) -> Result<Option<u32>> {
         let mut data = vec![0; len];
         blob.read_at(&mut data, bloom::ENCODED_LEN as u64)?;
@@ -141,6 +180,7 @@ impl SsTable {
         }
     }
 
+    /// Reads exact block of data, decodes it and returns decoded struct.
     fn read_block(blob: &impl StorageEntry, index_len: u16, offset: u32) -> Result<Block> {
         let mut data = vec![0; block::BLOCK_BYTE_SIZE];
         // Offsets are being set in index relative to Data Section start, so to get offset
@@ -281,6 +321,18 @@ mod tests {
         }
     }
 
+    fn create_shrinked_table() -> MemTable {
+        let mut mt = MemTable::new(SsTableSize::Default, None);
+        mt.insert(Bytes::from("Fyodor"), Bytes::from("Dostoevsky"), None);
+        mt.insert(Bytes::from("Jerome"), Bytes::from("Salinger"), None);
+        mt.insert(Bytes::from("Leo"), Bytes::from("Tolstoy"), None);
+        mt.insert(Bytes::from("William"), Bytes::from("Shakespeare"), None);
+        mt.insert(Bytes::from("Jorge"), Bytes::from("Borges"), None);
+        mt.insert(Bytes::from("Vladimir"), Bytes::from("Nabokov"), None);
+        mt.insert(Bytes::from("Walt"), Bytes::from("Whitman"), None);
+        mt
+    }
+
     #[test]
     fn test_build() {
         let (mt, _, _) = create_full_memtable(SsTableSize::Default);
@@ -289,12 +341,100 @@ mod tests {
         // TODO: Not the best assertion since number of blocks is not guaranteed to be the same all the time.
         // Test could potentially be flacky.
         assert_eq!(built.blocks.len(), 16);
+
+        let mt = create_shrinked_table();
+        let built = SsTable::build(mt);
+        assert_eq!(built.blocks.len(), 1);
+    }
+
+    #[test]
+    fn test_lookup_shrinked_table() {
+        let mt = create_shrinked_table();
+        let built = SsTable::build(mt);
+        let encoded = built.encode();
+
+        let stor = mem::new();
+        let write = stor.write(&built.id, encoded.as_ref());
+        assert!(
+            write.is_ok(),
+            "persisting a table err: {:?}",
+            write.err().unwrap()
+        );
+
+        let open = stor.open(&built.id);
+        assert!(open.is_ok(), "opening blob err: {:?}", open.err().unwrap());
+
+        let blob = open.unwrap();
+        let res = SsTable::lookup(&blob, &Bytes::from("Fyodor"));
+        assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
+        let res = res.unwrap();
+        assert!(res.is_some());
+
+        let mut mt = MemTable::new(SsTableSize::Default, None);
+        mt.insert(Bytes::from("Fyodor"), Bytes::from("Dostoevsky"), None);
+        let built = SsTable::build(mt);
+        let encoded = built.encode();
+
+        let stor = mem::new();
+        let write = stor.write(&built.id, encoded.as_ref());
+        assert!(
+            write.is_ok(),
+            "persisting a table err: {:?}",
+            write.err().unwrap()
+        );
+
+        let open = stor.open(&built.id);
+        assert!(open.is_ok(), "opening blob err: {:?}", open.err().unwrap());
+
+        let blob = open.unwrap();
+        let res = SsTable::lookup(&blob, &Bytes::from("Fyodor"));
+        assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
+        let res = res.unwrap();
+        assert!(res.is_some());
+        let res = SsTable::lookup(&blob, &Bytes::from("Jesus"));
+        assert!(res.is_ok(), "lookup err: {:?}", res.err().unwrap());
+        let res = res.unwrap();
+        assert!(res.is_none());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_build_full_should_panic() {
+        let mt = create_shrinked_table();
+        let _ = SsTable::build_full(mt);
+    }
+
+    #[test]
+    fn test_decode() {
+        let (mt, key, value) = create_full_memtable(SsTableSize::Is(4 * 1024));
+        let built = SsTable::build_full(mt.clone());
+        let mut encoded = built.encode();
+        let decoded = SsTable::decode(&mut encoded);
+        assert!(decoded.is_ok());
+        let map = decoded.unwrap();
+        assert!(map.contains_key(&key));
+        let got = map.get(&key);
+        assert!(got.is_some());
+        let got = got.unwrap();
+        assert_eq!(got, &value);
+
+        let mt = create_shrinked_table();
+        let built = SsTable::build(mt.clone());
+        let mut encoded = built.encode();
+        let decoded = SsTable::decode(&mut encoded);
+        assert!(decoded.is_ok());
+        let map = decoded.unwrap();
+        assert!(map.contains_key(&Bytes::from("Fyodor")));
+        let got = map.get(&Bytes::from("Fyodor"));
+        assert!(got.is_some());
+        let got = got.unwrap();
+        assert_eq!(got, &Bytes::from("Dostoevsky"));
     }
 
     #[test]
     fn test_lookup() {
         let (mt, _, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
-        let built = SsTable::build(mt.clone());
+        let built = SsTable::build_full(mt.clone());
         let encoded = built.encode();
 
         let stor = mem::new();
@@ -322,7 +462,7 @@ mod tests {
     #[test]
     fn test_probe_bloom_and_lookup_index() {
         let (mt, key, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
-        let built = SsTable::build(mt.clone());
+        let built = SsTable::build_full(mt.clone());
         let encoded = built.encode();
 
         let res = SsTable::probe_bloom(&encoded, &key);
@@ -381,7 +521,7 @@ mod tests {
     fn test_probe_bloom() {
         let (mt, key, _) = create_full_memtable(SsTableSize::Is(8 * 1024));
 
-        let built = SsTable::build(mt);
+        let built = SsTable::build_full(mt);
         let encoded = built.encode();
 
         let res = SsTable::probe_bloom(&encoded, &key);
