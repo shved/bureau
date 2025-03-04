@@ -34,8 +34,8 @@ pub const ENTRY_OVERHEAD: u32 = U16_SIZE * 3;
 
 #[derive(Debug)]
 pub struct Block {
-    data: Vec<u8>,
-    offsets: Vec<u16>,
+    pub data: Vec<u8>,
+    pub offsets: Vec<u16>,
     pub first_key: Bytes,
     pub last_key: Bytes,
     size: u32,
@@ -87,6 +87,7 @@ impl Block {
 
     /// Puts the contents of the block into a sequence of bytes.
     /// Schema that is used can be found on top of the mod source code.
+    // TODO: Add zero paddings in the end to make it 4KB exactly.
     pub fn encode(&self) -> Vec<u8> {
         assert!(!self.is_empty(), "Attempt to encode an empty block");
         let mut buf = Vec::with_capacity(BLOCK_BYTE_SIZE);
@@ -149,7 +150,7 @@ impl Block {
             offsets,
             first_key: Bytes::default(), // Field used while decoding the SsTable.
             last_key: Bytes::default(),  // Field used while decoding the SsTable.
-            size: 0,                     // The field only used should not be used on decoded block.
+            size: 0,                     // The field should not be used on decoded block.
         }
     }
 
@@ -176,7 +177,7 @@ impl Block {
         None
     }
 
-    fn parse_frame(&self, offset: usize) -> Bytes {
+    pub fn parse_frame(&self, offset: usize) -> Bytes {
         let mut len_bytes: [u8; 2] = [0, 0];
         len_bytes.copy_from_slice(&self.data[offset..offset + 2]);
         let len = u16::from_be_bytes(len_bytes) as usize;

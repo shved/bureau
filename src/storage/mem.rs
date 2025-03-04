@@ -83,6 +83,12 @@ impl crate::StorageEntry for Vec<u8> {
 
         Ok(())
     }
+
+    fn read_all(&mut self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.extend_from_slice(self);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

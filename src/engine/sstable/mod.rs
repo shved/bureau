@@ -8,6 +8,7 @@ use block::Block;
 use bloom::BloomSerializable;
 use bloomfilter::Bloom;
 use bytes::{Buf, BufMut, Bytes};
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use uuid::Uuid;
 
@@ -16,7 +17,7 @@ SST layout schema. First section is to be read first to make the initial checks 
 ----------------------------------------------------------------------------------------------------------------------------
 | Bloom filter |                                Table Index                                    |       Blocks Section      |
 ----------------------------------------------------------------------------------------------------------------------------
-|  7717 Bytes  | Index len (2B) | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
+|  7718 Bytes  | Index len (2B) | Entries num (2B) | Entry #1 | ... | Entry #N | Checksum (4B) | Block #1 | ... | Block #N |
 ----------------------------------------------------------------------------------------------------------------------------
 
 Table index entry layout.
@@ -91,6 +92,30 @@ impl SsTable {
         content.extend(blocks_encoded);
 
         content
+    }
+
+    pub fn decode(blob: &mut impl StorageEntry) -> Result<BTreeMap<Bytes, Bytes>> {
+        let mut data = Vec::new();
+        blob.read_all(&mut data)?;
+        let index_len =
+            u16::from_be_bytes([data[bloom::ENCODED_LEN], data[bloom::ENCODED_LEN + 1]]);
+        let index_start = bloom::ENCODED_LEN + 2;
+        let index_end = bloom::ENCODED_LEN + 2 + index_len as usize;
+        let index = TableIndex::decode(&data[index_start..index_end]);
+
+        let mut map = BTreeMap::new();
+
+        for ie in index.0 {
+            let block_start = index_end + ie.offset as usize;
+            let block = Block::decode(&data[block_start..block_start + block::BLOCK_BYTE_SIZE]);
+            for offset in block.offsets.iter() {
+                let key = block.parse_frame(*offset as usize);
+                let value = block.parse_frame(*offset as usize + 2 + key.len());
+                map.insert(key, value);
+            }
+        }
+
+        Ok(map)
     }
 
     /// Generates a simple and time ordered uuid (v7).
@@ -289,6 +314,10 @@ mod tests {
         // TODO: Not the best assertion since number of blocks is not guaranteed to be the same all the time.
         // Test could potentially be flacky.
         assert_eq!(built.blocks.len(), 16);
+    }
+
+    fn test_decode() {
+        todo!();
     }
 
     #[test]

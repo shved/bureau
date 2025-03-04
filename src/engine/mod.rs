@@ -67,9 +67,12 @@ impl<W: WalStorage> Engine<W> {
     /// the channel. It itself also spawns a dispathcher thread that works with everything
     /// living on the disk. Thats why storage is being passed here, hense it is not 'belong'
     /// to engine directly.
-    pub async fn run<T: Storage>(mut self, storage: T) -> Result<()> {
+    pub async fn run<T: Storage>(mut self, storage: T) -> Result<()>
+    where
+        <T as Storage>::Entry: Send,
+    {
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
-        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage)
+        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage.clone())
             .map_err(|e| format!("could not initialize dispatcher: {}", e))?;
 
         let dispatcher_join_handle = tokio::spawn(async move {
@@ -83,6 +86,20 @@ impl<W: WalStorage> Engine<W> {
             };
         });
         let dispatcher_abort_handle = dispatcher_join_handle.abort_handle();
+
+        let disp_storage = storage.clone();
+        let compaction_disp_tx = disp_tx.clone();
+        let compaction_join_handle = tokio::spawn(async move {
+            match dispatcher::compaction::run(disp_storage, compaction_disp_tx).await {
+                Ok(()) => {
+                    tracing::info!("dispatcher stoped");
+                }
+                Err(e) => {
+                    tracing::error!("dispatcher exited with error: {:?}", e);
+                }
+            };
+        });
+        let compaction_abort_handle = compaction_join_handle.abort_handle();
 
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
@@ -162,12 +179,14 @@ impl<W: WalStorage> Engine<W> {
 
                     let _ = responder.send(Ok(()));
                     dispatcher_abort_handle.abort();
+                    compaction_abort_handle.abort();
                     return Ok(());
                 }
             };
         }
 
         let _ = dispatcher_join_handle.await;
+        let _ = compaction_join_handle.await;
 
         Ok(())
     }
