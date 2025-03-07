@@ -1,4 +1,4 @@
-mod compaction;
+pub mod compaction;
 mod index;
 
 use crate::engine::memtable::MemTable;
@@ -6,6 +6,7 @@ use crate::engine::sstable::SsTable;
 use crate::{Responder, Result, Storage};
 use bytes::Bytes;
 use index::Index;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -18,7 +19,7 @@ pub enum Command {
         data: MemTable,
         responder: Responder<()>,
     },
-    ReplaceTables(((Uuid, Uuid), Uuid)), // TODO: To be used by a compaction thread.
+    Update(Uuid, Arc<MemTable>), // TODO: To be used by a compaction thread.
     Shutdown {
         responder: Responder<()>,
     },
@@ -46,7 +47,7 @@ impl<T: Storage> Dispatcher<T> {
         storage: T,
     ) -> std::result::Result<Self, anyhow::Error> {
         let mut entries = storage.list_entries()?;
-        let index = Index::init(&mut entries);
+        let index = Index::new(&mut entries);
 
         Ok(Dispatcher {
             cmd_rx,
@@ -99,8 +100,12 @@ impl<T: Storage> Dispatcher<T> {
                         let _ = responder.send(Ok(())); // If buffer is full, ack only when the table is on disk.
                     }
                 }
-                Command::ReplaceTables(((_old1, _old2), _new)) => {
-                    todo!()
+                Command::Update(uuid, mem_table) => {
+                    let mt = Arc::try_unwrap(mem_table).unwrap();
+                    let sstable = SsTable::build(mt);
+                    let encoded = sstable.encode();
+
+                    self.storage.write(&uuid, &encoded)?;
                 }
                 Command::Shutdown { responder } => {
                     let _ = self.storage.close();

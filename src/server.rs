@@ -35,7 +35,10 @@ pub async fn run<S: Storage, W: WalStorage>(
     storage: S,
     wal_storage: W,
     signal: impl Future,
-) -> crate::Result<()> {
+) -> crate::Result<()>
+where
+    <S as Storage>::Entry: Send,
+{
     storage
         .bootstrap()
         .map_err(|e| format!("could not setup storage: {}", e))?;
