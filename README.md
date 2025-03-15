@@ -40,7 +40,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] async test with few clients, test shutdown as well
 - [x] make clean binary protocol instead of dummy line based protocol
 - [x] wal
-- [ ] compaction
+- [x] compaction
 - [ ] cache
 - [ ] performance testing
 - [ ] move paddings and paging concerns from WAL to its fs storage
