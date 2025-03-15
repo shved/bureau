@@ -100,8 +100,7 @@ fn compact(first: &mut BTreeMap<Bytes, Bytes>, second: &BTreeMap<Bytes, Bytes>) 
 mod tests {
     use super::*;
     use crate::engine::dispatcher::Command;
-    use crate::engine::memtable::ProbeResult;
-    use crate::engine::memtable::{MemTable, SsTableSize};
+    use crate::engine::memtable::{MemTable, ProbeResult, SsTableSize};
     use crate::engine::sstable::SsTable;
     use crate::storage::mem;
     use tokio::sync::mpsc;
