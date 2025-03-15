@@ -52,6 +52,12 @@ impl crate::Storage for MemStorage {
     fn close(&self) -> io::Result<()> {
         Ok(())
     }
+
+    fn delete(&self, table_id: &Uuid) -> io::Result<()> {
+        let _ = self.entries.lock().unwrap().remove(table_id);
+
+        Ok(())
+    }
 }
 
 impl crate::StorageEntry for Vec<u8> {
@@ -80,6 +86,12 @@ impl crate::StorageEntry for Vec<u8> {
                 ),
             ));
         }
+
+        Ok(())
+    }
+
+    fn read_all(&mut self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.extend_from_slice(self);
 
         Ok(())
     }
@@ -146,5 +158,12 @@ mod tests {
             entry.read_at(&mut data, 0).is_err(),
             "target vec capacity exceeds source vec length"
         );
+
+        assert!(st
+            .delete(&Uuid::parse_str("01922ffe-ff42-7a24-99af-69793801e519").unwrap())
+            .is_ok());
+        assert!(st
+            .open(&Uuid::parse_str("01922ffe-ff42-7a24-99af-69793801e519").unwrap())
+            .is_err());
     }
 }

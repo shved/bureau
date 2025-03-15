@@ -8,7 +8,7 @@ use crate::{Responder, Result, Storage, WalStorage};
 use bytes::Bytes;
 use dispatcher::Dispatcher;
 use tokio::sync::{mpsc, oneshot};
-use tracing::error;
+use tracing::{error, info};
 
 /// This is where data files will be stored.
 // TODO: Make configurable.
@@ -52,9 +52,12 @@ pub struct Engine<W: WalStorage> {
 
 /// Engine is a working horse of the database. It holds memtable and a channel to communicate commands to.
 impl<W: WalStorage> Engine<W> {
-    pub fn new(rx: mpsc::Receiver<Command>, wal_storage: W) -> Result<Self> {
+    pub fn init(rx: mpsc::Receiver<Command>, wal_storage: W) -> Result<Self> {
         let (wal, initial_records) = Wal::init(wal_storage)?;
-        let mt = MemTable::new(SsTableSize::Default, Some(initial_records));
+        if initial_records.is_some() {
+            info!("Engine started with initial records recovered from WAL");
+        }
+        let mt = MemTable::new(SsTableSize::Default, initial_records);
 
         Ok(Engine {
             input_rx: rx,
@@ -67,9 +70,12 @@ impl<W: WalStorage> Engine<W> {
     /// the channel. It itself also spawns a dispathcher thread that works with everything
     /// living on the disk. Thats why storage is being passed here, hense it is not 'belong'
     /// to engine directly.
-    pub async fn run<T: Storage>(mut self, storage: T) -> Result<()> {
+    pub async fn run<T: Storage>(mut self, storage: T) -> Result<()>
+    where
+        <T as Storage>::Entry: Send,
+    {
         let (disp_tx, disp_rx) = mpsc::channel::<dispatcher::Command>(64);
-        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage)
+        let disp = Dispatcher::init(disp_rx, DISPATCHER_BUFFER_SIZE, storage.clone())
             .map_err(|e| format!("could not initialize dispatcher: {}", e))?;
 
         let dispatcher_join_handle = tokio::spawn(async move {
@@ -83,6 +89,20 @@ impl<W: WalStorage> Engine<W> {
             };
         });
         let dispatcher_abort_handle = dispatcher_join_handle.abort_handle();
+
+        let disp_storage = storage.clone();
+        let compaction_disp_tx = disp_tx.clone();
+        let compaction_join_handle = tokio::spawn(async move {
+            match dispatcher::compaction::run(disp_storage, compaction_disp_tx).await {
+                Ok(()) => {
+                    tracing::info!("dispatcher stoped");
+                }
+                Err(e) => {
+                    tracing::error!("dispatcher exited with error: {:?}", e);
+                }
+            };
+        });
+        let compaction_abort_handle = compaction_join_handle.abort_handle();
 
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
@@ -162,12 +182,14 @@ impl<W: WalStorage> Engine<W> {
 
                     let _ = responder.send(Ok(()));
                     dispatcher_abort_handle.abort();
+                    compaction_abort_handle.abort();
                     return Ok(());
                 }
             };
         }
 
         let _ = dispatcher_join_handle.await;
+        let _ = compaction_join_handle.await;
 
         Ok(())
     }
@@ -567,7 +589,7 @@ mod tests {
         let stor = mem::new();
         let wal_stor = MemStorage::init(InitialState::Blank).unwrap();
         let (req_tx, req_rx) = mpsc::channel(64);
-        let engine = Engine::new(req_rx, wal_stor).unwrap();
+        let engine = Engine::init(req_rx, wal_stor).unwrap();
 
         tokio::spawn(async move {
             if let Err(e) = engine.run(stor).await {
@@ -666,7 +688,7 @@ mod tests {
         let stor = mem::new();
         let wal_stor = MemStorage::init(InitialState::Blank).unwrap();
         let (req_tx, req_rx) = mpsc::channel(64);
-        let engine = Engine::new(req_rx, wal_stor).unwrap();
+        let engine = Engine::init(req_rx, wal_stor).unwrap();
         tokio::spawn(async move {
             if let Err(e) = engine.run(stor).await {
                 panic!("engine exited with error: {:?}", e);
