@@ -1,11 +1,12 @@
 use crate::engine::dispatcher::Command;
 use crate::engine::memtable::{MemTable, SsTableSize};
+use crate::engine::sstable::block;
 use crate::engine::sstable::SsTable;
 use crate::{Result, Storage};
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc::Sender;
-use tokio::time::{self, Duration};
+use tokio::time::{self, Duration, Instant};
 use tracing::info;
 use uuid::Uuid;
 
@@ -19,21 +20,25 @@ pub async fn run<T: Storage>(storage: T, dispatcher_tx: Sender<Command>) -> Resu
     loop {
         interval.tick().await;
 
-        info!("compaction started");
-
         let mut entries = storage.list_entries()?;
-
         if entries.len() < 10 {
             info!(
                 "skipping compaction; there are only {} entries",
                 entries.len()
             );
             continue;
+        } else {
+            info!("compaction started for {} tables", entries.len());
         }
+        let start = Instant::now();
 
-        compaction(storage.clone(), &dispatcher_tx, entries.as_mut()).await?;
+        let total = compaction(storage.clone(), &dispatcher_tx, entries.as_mut()).await?;
 
-        info!("compaction finished");
+        let elapsed = start.elapsed().as_millis();
+        info!(
+            "compaction finished in {} ms, {} bytes shrinked in total",
+            elapsed, total
+        );
     }
 }
 
@@ -42,29 +47,29 @@ async fn compaction<T: Storage>(
     storage: T,
     disp_tx: &Sender<Command>,
     entries: &mut [Uuid],
-) -> Result<()> {
+) -> Result<usize> {
     assert!(entries.len() > 2);
 
     entries.sort();
 
+    let mut total_shrinked: usize = 0;
+
     for i in 0..entries.len() - 1 {
         let mut table = storage.open(&entries[i])?;
         let mut map = SsTable::decode(&mut table)?;
-        let mut changed = false;
+        let mut shrinked_bytes: usize = 0;
 
         for j in i + 1..entries.len() {
             let mut compare_table = storage.open(&entries[j])?;
             let compare_map = SsTable::decode(&mut compare_table)?;
-            if compact(&mut map, &compare_map) {
-                changed = true;
-            }
+            let res = compact(&mut map, &compare_map);
+            shrinked_bytes += res;
             if map.is_empty() {
                 break;
             }
         }
 
-        if changed {
-            info!("table {} was shrinked, updating the table", &entries[i]);
+        if shrinked_bytes > 0 {
             let m = if map.is_empty() {
                 None
             } else {
@@ -73,27 +78,35 @@ async fn compaction<T: Storage>(
 
             let _ = disp_tx.send(Command::Update(entries[i], m)).await;
 
-            info!("table {} was updated", &entries[i]);
+            total_shrinked += shrinked_bytes;
+
+            info!(
+                "table {} shrinked for {} bytes",
+                &entries[i], shrinked_bytes
+            );
         }
     }
 
-    Ok(())
+    Ok(total_shrinked)
 }
 
-fn compact(first: &mut BTreeMap<Bytes, Bytes>, second: &BTreeMap<Bytes, Bytes>) -> bool {
+fn compact(first: &mut BTreeMap<Bytes, Bytes>, second: &BTreeMap<Bytes, Bytes>) -> usize {
     let keys_to_delete: Vec<Bytes> = first
         .keys()
         .filter(|k| second.contains_key(*k))
         .cloned()
         .collect();
 
-    let changed = !keys_to_delete.is_empty();
+    let mut shrinked_bytes: usize = 0;
 
     for key in keys_to_delete {
-        first.remove(&key);
+        if let Some(value) = first.remove(&key) {
+            shrinked_bytes =
+                shrinked_bytes + block::ENTRY_OVERHEAD as usize + key.len() + value.len();
+        }
     }
 
-    changed
+    shrinked_bytes
 }
 
 #[cfg(test)]
@@ -116,7 +129,7 @@ mod tests {
         second.insert(Bytes::from("Leo"), Bytes::from("Tolstoy"));
         second.insert(Bytes::from("Anton"), Bytes::from("Checkov"));
 
-        assert!(compact(&mut first, &second));
+        assert!(compact(&mut first, &second) > 0);
         assert!(!first.contains_key(&Bytes::from("Leo")));
     }
 

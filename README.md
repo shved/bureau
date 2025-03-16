@@ -47,6 +47,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] remake sstable index to VecDequeue
 - [ ] make blocks fill paddings with zeroes to be exactly disk page in size
 - [ ] wrap in-memory WAL implementation in Arc to cover more cases with unit tests
+- [ ] make all const usize and cast them only when encoding data
 - [ ] build config from env at the server start
 - [ ] add workflow for testcov
 - [ ] make bin crate alfa version
