@@ -11,6 +11,10 @@ path = "src/bin/server.rs"
 name = "bureau-client"
 path = "src/bin/client.rs"
 
+[[bin]]
+name = "bureau-demo"
+path = "src/bin/demo.rs"
+
 [[bench]]
 name = "search_in_block"
 harness = false
@@ -19,6 +23,7 @@ harness = false
 anyhow = "1.0.97"
 bloomfilter = "3.0.1"
 bytes = "1.10.1"
+rand = "0.9.0"
 clap = { version = "4.5.32", features = ["derive"] }
 crc32fast = "1.4.2"
 futures = { version = "0.3.31", features = ["thread-pool"] }
@@ -30,10 +35,12 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "ansi", "env-filter", "tracing-log"] }
 uuid = { version = "1.16.0", features = ["v7"] }
 strum = { version = "0.27.1", features = ["derive"] }
+ratatui = "0.29.0"
+crossterm = "0.28.1"
+parking_lot = "0.12.3"
 
 [dev-dependencies]
 criterion = "0.5.1"
-rand = "0.9.0"
 random-string = "1.1.0"
 strum = { version = "0.27.1", features = ["derive"] }
 tracing-test = "0.2.5"

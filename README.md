@@ -1,3 +1,4 @@
+# Bureau 🗃️
 Bureau is the key-value database based on LSM tree. The project has two goals. First, it helps me getting comfortable with Rust language. Second, I'm really curious about databases internals (currently going through an excellent set of lectures [here](https://youtube.com/playlist?list=PLSE8ODhjZXjaKScG3l0nuOiDTTqpfnWFf&si=kDk7n-zLPoWhAbBy)) and this project is just my lab puppet to put my fingers into it. So, obviously this is not a production grade database. Given that, there is a list of what it does not do:
 - does not support delete key
 - does not support complex data types (e.g. collections)
@@ -6,7 +7,29 @@ Bureau is the key-value database based on LSM tree. The project has two goals. F
 - it is built for Linux (and may be Unix) systems only
 - no backward compatibility guarantees: protocol and files formats are to be broken at any moment
 
-### Case study
+## Run
+To play around there is a demo binary. In one terminal session run the database with
+```
+make dev.up
+```
+in another session call
+```
+cargo run --bin bureau-demo
+```
+amount of clients can be set with --clients=X option like that
+```
+cargo run --bin bureau-demo -- --clients=50
+```
+There are default of 30 clients. Reads/writes ratio is set to 0.9 in favour of writes,
+and the ratio of rewriting old keys is set to 0.5 which makes the compaction pretty heavy.
+You can play around with those numbers in the demo.rs code as well.
+
+If you want to clean up the files writen (WAL and data), call
+```
+make dev.clean
+```
+
+## Case study
 Here goes the list of the most peculiar and fun stuff I've met so far doing this project.
 * For a mem table which is a first part of LSM that sucks data first, I was first going to take an AVL-tree which is a perfect fit here. But then discovered Rust's std BTreeMap implementation which keys are also sorted. So for the sake of reducing dependencies surface I've choosen to stick with something that goes with the language itself. It is probably better in terms of performance as well since all the AVL crates I've found at the moment were looking like someones lab projects for algo learning purposes.
 * The database has two main long running threads. The idea behind that is simple. The database operates both in memory (when the new data just come in) and on disk. These two are very different and can be managed separately so I decided to split their work into independent threads and make them synchronize through communication channels. This separation of concerns looks pretty natural to me. In the code the thing that is operating in RAM is called Engine and the thread that works with disk is called Dispatcher. 
@@ -24,7 +47,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 * Because of how tokio_util framed protocols work, there is an opportunity for client to actually occupy the connection forever if they send not enough bytes for a request. By the protocol design every message starts with the payload length so the server will just continue checking the socket for new bytes coming. There is a workaound for it with tokio timeout function for futures, but I don't like it from the program behaviour perspective. And I also don't think this should be considered a problem. Just a curious thing that TCP idle timout won't help here in a particular case when client has sent valid message length but never sent the payload.
 * Doing WAL I had to decide on the persistance strategy. I decided to go with the buffered writes. So WAL is adding records to buffer that is exactly disk page in size. For simplicity it just assumes the page is 4KB (even though this is not always true). To keep pages 4KB exactly there were two alternatives on the table. One to split the records whenever the buffer is full and second to add paddings of zeroes to buffer whenever the buffer is about to overflow. I decided to go with the second option even though it adds a bit of overhead to the data in size for paddings. First option would make it possible to have broken records in WAL and to recover from such a state it would be needed to have some kind of specieal 'recovery' mode. I decided to keep it simple for the end user.
 
-### TODOs
+## TODOs
 - [x] change dump Arc 'database' to LSM with channels
 - [x] add simple server logs
 - [x] write sstable after memtable is full
@@ -41,7 +64,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] make clean binary protocol instead of dummy line based protocol
 - [x] wal
 - [x] compaction
-- [ ] performance testing
+- [x] poor performance test
 - [ ] cache
 - [ ] move paddings and paging concerns from WAL to its fs storage
 - [ ] remake sstable index to VecDequeue
