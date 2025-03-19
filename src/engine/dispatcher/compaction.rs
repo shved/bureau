@@ -6,7 +6,7 @@ use crate::{Result, Storage};
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc::Sender;
-use tokio::time::{self, Duration, Instant};
+use tokio::time::{self, sleep, Duration, Instant};
 use tracing::info;
 use uuid::Uuid;
 
@@ -15,13 +15,13 @@ use uuid::Uuid;
 // keys or not and then only read those blocks that are potentially have intersection with
 // the given table. For now it just checks for all the records.
 pub async fn run<T: Storage>(storage: T, dispatcher_tx: Sender<Command>) -> Result<()> {
-    let mut interval = time::interval(Duration::from_secs(5 * 60));
+    let mut interval = time::interval(Duration::from_secs(10 * 60));
 
     loop {
         interval.tick().await;
 
         let mut entries = storage.list_entries()?;
-        if entries.len() < 10 {
+        if entries.len() < 100 {
             info!(
                 "skipping compaction; there are only {} entries",
                 entries.len()
@@ -35,6 +35,7 @@ pub async fn run<T: Storage>(storage: T, dispatcher_tx: Sender<Command>) -> Resu
         let total = compaction(storage.clone(), &dispatcher_tx, entries.as_mut()).await?;
 
         let elapsed = start.elapsed().as_millis();
+
         info!(
             "compaction finished in {} ms, {} bytes shrinked in total",
             elapsed, total
@@ -55,6 +56,9 @@ async fn compaction<T: Storage>(
     let mut total_shrinked: usize = 0;
 
     for i in 0..entries.len() - 1 {
+        // Give dispatcher thread a little time to process more prioritised duties.
+        sleep(Duration::from_millis(200)).await;
+
         let mut table = storage.open(&entries[i])?;
         let mut map = SsTable::decode(&mut table)?;
         let mut shrinked_bytes: usize = 0;

@@ -46,6 +46,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 * I started with very basic and dumb protocol where messages are simply utf-8 strings separated by new line indicator. It has a bunch of limitations so I decided to make a simple binary protocol instead. It won't make any hashsum checks since the request is not stored anywhere, request cant be split into pieces and performance is a priority for requests. Again, protocol meant to be as simple as possible.
 * Because of how tokio_util framed protocols work, there is an opportunity for client to actually occupy the connection forever if they send not enough bytes for a request. By the protocol design every message starts with the payload length so the server will just continue checking the socket for new bytes coming. There is a workaound for it with tokio timeout function for futures, but I don't like it from the program behaviour perspective. And I also don't think this should be considered a problem. Just a curious thing that TCP idle timout won't help here in a particular case when client has sent valid message length but never sent the payload.
 * Doing WAL I had to decide on the persistance strategy. I decided to go with the buffered writes. So WAL is adding records to buffer that is exactly disk page in size. For simplicity it just assumes the page is 4KB (even though this is not always true). To keep pages 4KB exactly there were two alternatives on the table. One to split the records whenever the buffer is full and second to add paddings of zeroes to buffer whenever the buffer is about to overflow. I decided to go with the second option even though it adds a bit of overhead to the data in size for paddings. First option would make it possible to have broken records in WAL and to recover from such a state it would be needed to have some kind of specieal 'recovery' mode. I decided to keep it simple for the end user.
+* Compaction is initially implemented very straightforward and not effective. In extent that I had to throttle iteration over tables by simply calling sleep for 200 ms to give reads and writes higher priority. Simple and not very informative measures shows that compaction only gives 1-2 ms of average response time which is fine for the first implementation. A better alternatives would be to have a pool of threads for disk interactions, may be sharding, or smarter selective locks that will only block get requests if they are about to use the table that is being in the process of compaction at the moment.
 
 ## TODOs
 - [x] change dump Arc 'database' to LSM with channels
@@ -72,6 +73,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] wrap in-memory WAL implementation in Arc to cover more cases with unit tests
 - [ ] make all const usize and cast them only when encoding data
 - [ ] build config from env at the server start
+- [ ] better concurrency for disk interactions; smarter dispatcher
 - [ ] add workflow for testcov
 - [ ] make bin crate alfa version
 - [ ] make a statistics unit
