@@ -73,7 +73,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] wrap in-memory WAL implementation in Arc to cover more cases with unit tests
 - [ ] make all const usize and cast them only when encoding data
 - [ ] build config from env at the server start
-- [ ] better concurrency for disk interactions; smarter dispatcher
+- [ ] experiment with better disk access concurrency with shared stateful index and thread pool of gets and separate threads for index updates
 - [ ] add workflow for testcov
 - [ ] make bin crate alfa version
 - [ ] make a statistics unit
