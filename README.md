@@ -72,8 +72,9 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] make blocks fill paddings with zeroes to be exactly disk page in size
 - [ ] wrap in-memory WAL implementation in Arc to cover more cases with unit tests
 - [ ] make all const usize and cast them only when encoding data
-- [ ] build config from env at the server start
+- [ ] use different hash functions in count min sketch for better distribution (it is currently 1 function with 4 seeds)
 - [ ] experiment with better disk access concurrency with shared stateful index and thread pool of gets and separate threads for index updates
+- [ ] build config from env at the server start
 - [ ] add workflow for testcov
 - [ ] make bin crate alfa version
 - [ ] make a statistics unit

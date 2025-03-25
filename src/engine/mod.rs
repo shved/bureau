@@ -1,7 +1,9 @@
+mod cache;
 mod dispatcher;
 pub mod memtable;
 mod sstable;
 
+use crate::engine::cache::{Cache, CheckResult};
 use crate::engine::memtable::{MemTable, SsTableSize};
 use crate::wal::Wal;
 use crate::{Responder, Result, Storage, WalStorage};
@@ -47,6 +49,7 @@ pub enum Command {
 pub struct Engine<W: WalStorage> {
     input_rx: mpsc::Receiver<Command>,
     memtable: MemTable,
+    cache: Cache,
     wal: Wal<W>,
 }
 
@@ -58,10 +61,12 @@ impl<W: WalStorage> Engine<W> {
             info!("Engine started with initial records recovered from WAL");
         }
         let mt = MemTable::new(SsTableSize::Default, initial_records);
+        let cache = Cache::new(100);
 
         Ok(Engine {
             input_rx: rx,
             memtable: mt,
+            cache,
             wal,
         })
     }
@@ -107,15 +112,23 @@ impl<W: WalStorage> Engine<W> {
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
+                    match self.cache.check(&key) {
+                        CheckResult::Found(value) => {
+                            let _ = responder.send(Ok(Some(value)));
+                            continue;
+                        }
+                        CheckResult::Lack => (),
+                        CheckResult::Miss => (),
+                    };
+
                     match self.get_from_mem(&key) {
                         Some(value) => {
-                            responder.send(Ok(Some(value))).ok();
+                            let _ = responder.send(Ok(Some(value)));
                         }
                         None => {
-                            disp_tx
+                            let _ = disp_tx
                                 .send(dispatcher::Command::Get { key, responder })
-                                .await
-                                .ok();
+                                .await;
                         }
                     };
                 }
@@ -128,6 +141,12 @@ impl<W: WalStorage> Engine<W> {
                         responder.and_then(|r| r.send(Err(err)).ok());
                         continue;
                     }
+
+                    match self.cache.check(&key) {
+                        CheckResult::Found(_) => self.cache.refresh(key.clone(), value.clone()),
+                        CheckResult::Lack => self.cache.set(key.clone(), value.clone()),
+                        CheckResult::Miss => (),
+                    };
 
                     match self.memtable.probe(&key, &value) {
                         memtable::ProbeResult::Available(new_size) => {
@@ -158,15 +177,14 @@ impl<W: WalStorage> Engine<W> {
                             // Now send full table to dispatcher to put it to disk.
                             let (resp_tx, resp_rx) = oneshot::channel();
 
-                            disp_tx
+                            let _ = disp_tx
                                 .send(dispatcher::Command::CreateTable {
                                     data: old_table,
                                     responder: resp_tx,
                                 })
-                                .await
-                                .ok();
+                                .await;
 
-                            resp_rx.await.ok(); // Blocks if dispatcher tables buffer is full.
+                            let _ = resp_rx.await; // Blocks if dispatcher tables buffer is full.
                         }
                     }
                 }
@@ -196,8 +214,6 @@ impl<W: WalStorage> Engine<W> {
 
     /// It only checks hot spots: cache, memtable.
     fn get_from_mem(&self, key: &Bytes) -> Option<Bytes> {
-        // TODO: First search cache.
-
         if let Some(value) = self.memtable.get(key) {
             return Some(value);
         }
