@@ -5,8 +5,7 @@ use std::hash::{Hash, Hasher};
 
 const CMS_BUCKETS: usize = 4;
 const CMS_WIDTH: usize = 4096;
-/// Key access complexity and demand score to be cached.
-const CACHE_THRESHOLD: usize = 10_000;
+const CACHE_THRESHOLD: usize = 100;
 
 // TODO: Rework min sketch to use different hash functions for different buckets for better distribution.
 // E.g. XXHash and MurMurHash3.
@@ -71,6 +70,7 @@ pub enum CheckResult {
 #[derive(Debug)]
 pub struct Cache {
     map: HashMap<Bytes, Bytes>,
+    generations: HashMap<Bytes, usize>,
     frequency: FrequenciesMinSketch,
     cap: usize,
     least_freq: (Bytes, usize),
@@ -80,6 +80,7 @@ impl Cache {
     pub fn new(cap: usize) -> Self {
         Self {
             map: HashMap::with_capacity(cap),
+            generations: HashMap::with_capacity(cap),
             frequency: FrequenciesMinSketch::new(),
             least_freq: (Bytes::default(), usize::MAX),
             cap,
@@ -95,10 +96,16 @@ impl Cache {
             // Try obtain the value.
             match self.map.get(key) {
                 Some(value) => {
+                    // Make use of generation to keep oldest records in the cache.
+                    let generation = match self.generations.get(key) {
+                        Some(g) => *g,
+                        None => 1,
+                    };
+
                     // Update least frequent key in the cache.
-                    if freq < self.least_freq.1 {
+                    if freq * generation < self.least_freq.1 {
                         self.least_freq.0 = key.clone();
-                        self.least_freq.1 = freq;
+                        self.least_freq.1 = freq * generation;
                     }
                     return CheckResult::Found(value.clone());
                 }
@@ -121,13 +128,21 @@ impl Cache {
             }
         }
 
-        self.map.insert(key, value);
+        self.map.insert(key.clone(), value);
+        self.generations.insert(key, 1);
     }
 
     /// Just replaces an old value with the new one. We trust caller here that
     /// the key is already set so the cache does not bloat.
     pub fn refresh(&mut self, key: Bytes, value: Bytes) {
-        self.map.insert(key, value);
+        self.map.insert(key.clone(), value);
+        self.generations.insert(key, 1);
+    }
+
+    pub fn increment_generations(&mut self) {
+        for (_, v) in self.generations.iter_mut() {
+            *v += 1;
+        }
     }
 
     /// Removes the least_freq keys from the map.

@@ -167,6 +167,7 @@ impl<W: WalStorage> Engine<W> {
                                 error!("could not rotate WAL: {}", e);
                                 return Err(e.into());
                             };
+                            self.cache.increment_generations();
                             if let Err(e) = self.wal.append(key.clone(), value.clone()) {
                                 error!("could not append wal entry: {}", e);
                                 continue;
