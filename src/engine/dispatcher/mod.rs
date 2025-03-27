@@ -1,12 +1,15 @@
+mod cache;
 pub mod compaction;
 mod index;
 
+use crate::engine::dispatcher::cache::{Cache, CacheValue, CheckResult};
 use crate::engine::memtable::MemTable;
 use crate::engine::sstable::SsTable;
 use crate::{Responder, Result, Storage};
 use bytes::Bytes;
 use index::Index;
 use tokio::sync::mpsc;
+use tracing::info;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -38,6 +41,7 @@ pub enum Command {
 pub struct Dispatcher<T: Storage> {
     cmd_rx: mpsc::Receiver<Command>,
     storage: T,
+    cache: Cache,
     index: Index,
     sst_buf_size: usize,
     sst_buf: usize,
@@ -51,10 +55,12 @@ impl<T: Storage> Dispatcher<T> {
     ) -> std::result::Result<Self, anyhow::Error> {
         let mut entries = storage.list_entries()?;
         let index = Index::new(&mut entries);
+        let cache = Cache::new(100);
 
         Ok(Dispatcher {
             cmd_rx,
             storage,
+            cache,
             index,
             sst_buf_size,
             sst_buf: 0,
@@ -67,22 +73,40 @@ impl<T: Storage> Dispatcher<T> {
                 Command::Get { key, responder } => {
                     // Defaults to Ok(None) which will be returned if none was found after all tables are checked.
                     let mut response: Result<Option<Bytes>, _> = Ok(None);
+                    let cache_check = self.cache.check(&key);
 
-                    for entry in self.index.entries.iter() {
-                        let blob = self.storage.open(&entry.id).unwrap(); // TODO: Log error and send response to engine.
+                    if let CheckResult::Found(value) = cache_check {
+                        info!(
+                            "served cached value with {} frequency and {} generation (score {})",
+                            value.score.frequency,
+                            value.score.generation,
+                            value.score()
+                        );
+                        response = Ok(Some(value.data));
+                    } else {
+                        // Go to disk to look for a value.
+                        for (i, entry) in self.index.entries.iter().enumerate() {
+                            let blob = self.storage.open(&entry.id).unwrap(); // TODO: Log error and send response to engine.
 
-                        match SsTable::lookup(&blob, &key) {
-                            Ok(Some(value)) => {
-                                response = Ok(Some(value));
-                                break;
-                            }
-                            Ok(None) => {
-                                // Go check the next table.
-                                continue;
-                            }
-                            Err(e) => {
-                                response = Err(e);
-                                break;
+                            match SsTable::lookup(&blob, &key) {
+                                Ok(Some(value)) => {
+                                    if let CheckResult::Candidate(freq) = cache_check {
+                                        self.cache.try_insert(
+                                            key,
+                                            CacheValue::new(value.clone(), freq, i + 1),
+                                        )
+                                    }
+                                    response = Ok(Some(value));
+                                    break;
+                                }
+                                Ok(None) => {
+                                    // Go check the next table.
+                                    continue;
+                                }
+                                Err(e) => {
+                                    response = Err(e);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -126,7 +150,11 @@ impl<T: Storage> Dispatcher<T> {
         Ok(())
     }
 
-    fn persist_table(&self, data: MemTable) -> Uuid {
+    /// Serializes and writes table to disk.
+    /// It also visits and updates the cache along the way.
+    fn persist_table(&mut self, data: MemTable) -> Uuid {
+        self.update_cache(&data);
+
         let table = SsTable::build_full(data);
         let encoded_data = table.encode();
 
@@ -136,5 +164,15 @@ impl<T: Storage> Dispatcher<T> {
             .expect("Cant persist table");
 
         table.id
+    }
+
+    /// First, advance all cache records generations since index about to be
+    /// updated with the new fresh table. Second, iterate all the new records
+    /// to possibly update cached records if same keys found.
+    fn update_cache(&mut self, data: &MemTable) {
+        self.cache.advance();
+        for (k, v) in data.map.iter() {
+            self.cache.update(k, v);
+        }
     }
 }

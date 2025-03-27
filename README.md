@@ -1,5 +1,5 @@
 # Bureau 🗃️
-Bureau is the key-value database based on LSM tree. The project has two goals. First, it helps me getting comfortable with Rust language. Second, I'm really curious about databases internals (currently going through an excellent set of lectures [here](https://youtube.com/playlist?list=PLSE8ODhjZXjaKScG3l0nuOiDTTqpfnWFf&si=kDk7n-zLPoWhAbBy)) and this project is just my lab puppet to put my fingers into it. So, obviously this is not a production grade database. Given that, there is a list of what it does not do:
+Bureau is the key-value database based on LSM tree. The project has two goals. First, it helps me getting comfortable with Rust language. Second, I'm really curious about databases internals (currently going through an excellent set of lectures [here](https://youtube.com/playlist?list=PLSE8ODhjZXjaKScG3l0nuOiDTTqpfnWFf&si=kDk7n-zLPoWhAbBy)) and this project is just my lab puppet to put my fingers into it. A brief coverage of the most interesting implementation outcomes goes further. So, obviously this is not a production grade database. Given that, there is a list of what it does not do:
 - does not support delete key
 - does not support complex data types (e.g. collections)
 - does not support any authentication facility
@@ -66,7 +66,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] wal
 - [x] compaction
 - [x] poor performance test
-- [ ] cache
+- [x] cache
 - [ ] move paddings and paging concerns from WAL to its fs storage
 - [ ] remake sstable index to VecDequeue
 - [ ] make blocks fill paddings with zeroes to be exactly disk page in size
@@ -74,6 +74,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [ ] make all const usize and cast them only when encoding data
 - [ ] use different hash functions in count min sketch for better distribution (it is currently 1 function with 4 seeds)
 - [ ] experiment with better disk access concurrency with shared stateful index and thread pool of gets and separate threads for index updates
+- [ ] handle potential integer overflows where possible (cache scoring goes first)
 - [ ] build config from env at the server start
 - [ ] add workflow for testcov
 - [ ] make bin crate alfa version

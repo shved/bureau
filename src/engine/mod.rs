@@ -1,9 +1,7 @@
-mod cache;
 mod dispatcher;
 pub mod memtable;
 mod sstable;
 
-use crate::engine::cache::{Cache, CheckResult};
 use crate::engine::memtable::{MemTable, SsTableSize};
 use crate::wal::Wal;
 use crate::{Responder, Result, Storage, WalStorage};
@@ -49,7 +47,6 @@ pub enum Command {
 pub struct Engine<W: WalStorage> {
     input_rx: mpsc::Receiver<Command>,
     memtable: MemTable,
-    cache: Cache,
     wal: Wal<W>,
 }
 
@@ -61,12 +58,10 @@ impl<W: WalStorage> Engine<W> {
             info!("Engine started with initial records recovered from WAL");
         }
         let mt = MemTable::new(SsTableSize::Default, initial_records);
-        let cache = Cache::new(100);
 
         Ok(Engine {
             input_rx: rx,
             memtable: mt,
-            cache,
             wal,
         })
     }
@@ -112,15 +107,6 @@ impl<W: WalStorage> Engine<W> {
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
-                    match self.cache.check(&key) {
-                        CheckResult::Found(value) => {
-                            let _ = responder.send(Ok(Some(value)));
-                            continue;
-                        }
-                        CheckResult::Lack => (),
-                        CheckResult::Miss => (),
-                    };
-
                     match self.get_from_mem(&key) {
                         Some(value) => {
                             let _ = responder.send(Ok(Some(value)));
@@ -142,12 +128,6 @@ impl<W: WalStorage> Engine<W> {
                         continue;
                     }
 
-                    match self.cache.check(&key) {
-                        CheckResult::Found(_) => self.cache.refresh(key.clone(), value.clone()),
-                        CheckResult::Lack => self.cache.set(key.clone(), value.clone()),
-                        CheckResult::Miss => (),
-                    };
-
                     match self.memtable.probe(&key, &value) {
                         memtable::ProbeResult::Available(new_size) => {
                             if let Err(e) = self.wal.append(key.clone(), value.clone()) {
@@ -167,7 +147,6 @@ impl<W: WalStorage> Engine<W> {
                                 error!("could not rotate WAL: {}", e);
                                 return Err(e.into());
                             };
-                            self.cache.increment_generations();
                             if let Err(e) = self.wal.append(key.clone(), value.clone()) {
                                 error!("could not append wal entry: {}", e);
                                 continue;
