@@ -163,6 +163,7 @@ dependencies = [
  "crossterm",
  "dashmap",
  "futures",
+ "num-traits",
  "parking_lot",
  "rand",
  "random-string",

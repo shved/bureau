@@ -67,6 +67,7 @@ Here goes the list of the most peculiar and fun stuff I've met so far doing this
 - [x] compaction
 - [x] poor performance test
 - [x] cache
+- [ ] update demo.rs so that it display actual distribution and percentile of response times, not only calculated average
 - [ ] move paddings and paging concerns from WAL to its fs storage
 - [ ] remake sstable index to VecDequeue
 - [ ] make blocks fill paddings with zeroes to be exactly disk page in size
