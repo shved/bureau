@@ -109,13 +109,12 @@ impl<W: WalStorage> Engine<W> {
                 Command::Get { key, responder } => {
                     match self.get_from_mem(&key) {
                         Some(value) => {
-                            responder.send(Ok(Some(value))).ok();
+                            let _ = responder.send(Ok(Some(value)));
                         }
                         None => {
-                            disp_tx
+                            let _ = disp_tx
                                 .send(dispatcher::Command::Get { key, responder })
-                                .await
-                                .ok();
+                                .await;
                         }
                     };
                 }
@@ -158,15 +157,14 @@ impl<W: WalStorage> Engine<W> {
                             // Now send full table to dispatcher to put it to disk.
                             let (resp_tx, resp_rx) = oneshot::channel();
 
-                            disp_tx
+                            let _ = disp_tx
                                 .send(dispatcher::Command::CreateTable {
                                     data: old_table,
                                     responder: resp_tx,
                                 })
-                                .await
-                                .ok();
+                                .await;
 
-                            resp_rx.await.ok(); // Blocks if dispatcher tables buffer is full.
+                            let _ = resp_rx.await; // Blocks if dispatcher tables buffer is full.
                         }
                     }
                 }
@@ -196,8 +194,6 @@ impl<W: WalStorage> Engine<W> {
 
     /// It only checks hot spots: cache, memtable.
     fn get_from_mem(&self, key: &Bytes) -> Option<Bytes> {
-        // TODO: First search cache.
-
         if let Some(value) = self.memtable.get(key) {
             return Some(value);
         }

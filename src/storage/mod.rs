@@ -1,4 +1,3 @@
-mod cache;
 pub mod mem;
 
 use crate::engine::DATA_PATH;
