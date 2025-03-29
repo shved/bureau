@@ -1,3 +1,4 @@
+use crate::engine::MemTable;
 use ahash::AHasher;
 use bytes::Bytes;
 use std::cmp::{min, Ordering};
@@ -319,19 +320,17 @@ impl Cache {
         false
     }
 
-    /// Just replaces an old value with the new one if it's in cache.
-    pub fn refresh_value(&mut self, key: &Bytes, value: &Bytes) {
-        if let Some(cache_value) = self.map.get_mut(key) {
-            cache_value.data = value.clone();
-            // New value also resets generation to 1.
-            cache_value.reset_generation();
-        }
-    }
-
-    /// Advances all the cache entries generations.
-    pub fn advance(&mut self) {
-        for (_, v) in self.map.iter_mut() {
+    /// It iterates over the whole cache map, first advances generation
+    /// and if the same key found in the fresh memtable, it gets updated.
+    /// In case value data was update to the new value, its generation
+    /// gets reset to 1.
+    pub fn refresh(&mut self, data: &MemTable) {
+        for (k, v) in self.map.iter_mut() {
             v.advance();
+            if let Some(value) = data.get(k) {
+                v.data = value.clone();
+                v.reset_generation();
+            }
         }
     }
 }
@@ -339,6 +338,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::SsTableSize;
 
     #[test]
     fn test_count_min_sketch() {
@@ -421,7 +421,8 @@ mod tests {
 
         assert!(c.is_full());
 
-        c.advance();
+        let mut m = MemTable::new(SsTableSize::Is(4096), None);
+        c.refresh(&m);
 
         let key_4 = Bytes::from("key4");
         let check_result = c.check(&key_4);
@@ -449,7 +450,8 @@ mod tests {
         }
 
         let new_value = Bytes::from("new_value");
-        c.refresh_value(&key_1, &new_value);
+        m.insert(key_1.clone(), new_value.clone(), None);
+        c.refresh(&m);
 
         let check_result = c.check(&key_1);
         assert!(matches!(check_result, CheckResult::Found(_)));
@@ -462,14 +464,32 @@ mod tests {
         let _ = c.check(&key_1);
         let _ = c.check(&key_1);
         let _ = c.check(&key_1);
+        let _ = c.check(&key_1);
+        let _ = c.check(&key_1);
+        let _ = c.check(&key_1);
+        let _ = c.check(&key_1);
+        let check_result = c.check(&key_1);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        // key1 score here should be 13.
+        if let CheckResult::Found(cv) = check_result {
+            assert_eq!(cv.score.generation, 1);
+            assert_eq!(cv.score.frequency, 13);
+        }
 
         // Check WLFU is still key_1.
         assert!(matches!(&c.wlfu, Wlfu::Set(_)));
         if let Wlfu::Set(key) = &c.wlfu {
             assert_eq!(key, &key_1);
         }
-        let _ = c.check(&key_1);
-        let _ = c.check(&key_2);
+
+        let check_result = c.check(&key_2);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        // key2 score here should be 12 and thus it should go as a new WLFU.
+        if let CheckResult::Found(cv) = check_result {
+            assert_eq!(cv.score.generation, 3);
+            assert_eq!(cv.score.frequency, 4);
+        }
+
         // Now WLFU should be key_2.
         assert!(matches!(&c.wlfu, Wlfu::Set(_)));
         if let Wlfu::Set(key) = &c.wlfu {

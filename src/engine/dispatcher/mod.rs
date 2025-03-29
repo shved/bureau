@@ -9,7 +9,7 @@ use crate::{Responder, Result, Storage};
 use bytes::Bytes;
 use index::Index;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -76,7 +76,7 @@ impl<T: Storage> Dispatcher<T> {
                     let cache_check = self.cache.check(&key);
 
                     if let CheckResult::Found(value) = cache_check {
-                        info!(
+                        debug!(
                             "served cached value with {} frequency and {} generation (score {})",
                             value.score.frequency,
                             value.score.generation,
@@ -153,7 +153,7 @@ impl<T: Storage> Dispatcher<T> {
     /// Serializes and writes table to disk.
     /// It also visits and updates the cache along the way.
     fn persist_table(&mut self, data: MemTable) -> Uuid {
-        self.update_cache(&data);
+        self.cache.refresh(&data);
 
         let table = SsTable::build_full(data);
         let encoded_data = table.encode();
@@ -164,15 +164,5 @@ impl<T: Storage> Dispatcher<T> {
             .expect("Cant persist table");
 
         table.id
-    }
-
-    /// First, advance all cache records generations since index about to be
-    /// updated with the new fresh table. Second, iterate all the new records
-    /// to possibly update cached records if same keys found.
-    fn update_cache(&mut self, data: &MemTable) {
-        self.cache.advance();
-        for (k, v) in data.map.iter() {
-            self.cache.refresh_value(k, v);
-        }
     }
 }
