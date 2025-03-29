@@ -31,7 +31,7 @@ pub enum Command {
 /// The lower this number, the lower memory bureau will consume under pressure. But all
 /// the reads and writes will be suspended while buffer is full.
 /// Dispatcher is also managing index which is a vector of all the tables ids persisted to disk.
-// TODO: Experiment with possibly better disk access sincronisation mechanism where index will be shared
+// TODO: Experiment with possibly better disk access syncronisation mechanism where index will be shared
 // across pool of threads, and every entry will be either free for access or locked for the moment
 // it is being updated. For the moment new table is being written, the whole index will be locked.
 #[derive(Debug)]
