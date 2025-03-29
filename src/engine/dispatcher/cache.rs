@@ -1,6 +1,6 @@
 use ahash::AHasher;
 use bytes::Bytes;
-use std::cmp::Ordering;
+use std::cmp::{min, Ordering};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -167,9 +167,14 @@ impl Wlfu {
 /// so that reading it will take more disk reads. That's why for disk reads it is
 /// crucial to keep track of a value generation. From the frequently requested
 /// values we want to cache the oldest ones. Generation helps to distinguish and
-/// score values by it's position in the set of tables. Cache can be easily promoted
-/// to be concurrent proof. Just change freq counters to be atomics and put RWLock
-/// on the data map.
+/// score values by it's position in the set of tables.
+///
+/// The implementation is rather sketchy, there could be all sorts of suboptimal
+/// behaviour but this is generally find. In long run all the most demanded and old
+/// records will settle here.
+///
+/// Cache can be easily promoted to be concurrent proof. Just change freq counters
+/// to be atomics and put RWLock on the data map.
 #[derive(Debug)]
 pub struct Cache {
     map: HashMap<Bytes, CacheValue>,
@@ -190,27 +195,34 @@ impl Cache {
 
     /// Every key for GET request goes through this call. It increments frequencies
     /// and checks for a cache record.
+    #[allow(clippy::manual_inspect)]
     pub fn check(&mut self, key: &Bytes) -> CheckResult {
-        // Update frequencies.
+        // Update CMS.
         let freq = self.frequency.increment(key);
 
         // Check the cache map.
-        match self.map.get_mut(key) {
-            Some(value) => {
-                // Update frequency.
+        match self
+            .map
+            .get_mut(key)
+            .map(|value| {
+                // Update frequency of value.
                 value.update_frequency(freq);
+                value
+            })
+            .cloned()
+        {
+            Some(value) => {
                 // Update least frequent key in the cache.
-                let nv = value.clone();
-                drop(value);
-                self.update_wlru(key, &nv);
+                self.update_wlru(key, &value);
 
-                return CheckResult::Found(nv);
+                return CheckResult::Found(value);
             }
             None => {
-                // Check if frequency is above threshold.
-                // Adjust the frequency threshold to be cache size
-                // so that empty cache will be quicker to fill.
-                if freq >= self.size() {
+                // Check if frequency is above threshold. Frequency threshold is to be
+                // a current cache size (but not higher then 100) so that empty cache
+                // will be quicker to fill.
+                let threshold = min(100, self.size());
+                if freq >= threshold {
                     return CheckResult::Candidate(freq);
                 }
             }
@@ -268,21 +280,28 @@ impl Cache {
     /// Try to evict record from cache to free space for a new record.
     fn evict(&mut self, candidate_value: &CacheValue) -> bool {
         match &self.wlfu {
-            Wlfu::Blank => {
-                // TODO: It is also possible to just set least_req in this branch so it later be adjusted.
-                return self.evict_iter(candidate_value);
-            }
-            Wlfu::Set { key, .. } => match self.map.remove(key) {
-                Some(_) => return true,
-                None => {
-                    if self.evict_iter(candidate_value) {
-                        return true;
+            Wlfu::Blank => self.evict_iter(candidate_value),
+            Wlfu::Set(key) => {
+                if let Some(value) = self.map.get(key) {
+                    if candidate_value > value {
+                        match self.map.remove(key) {
+                            Some(_) => {
+                                self.wlfu = Wlfu::Blank;
+                                return true;
+                            }
+                            None => {
+                                self.wlfu = Wlfu::Blank;
+                                return self.evict_iter(candidate_value);
+                            }
+                        }
                     }
-                }
-            },
-        };
 
-        false
+                    return false;
+                }
+
+                false
+            }
+        }
     }
 
     /// If no other option worked, try to evict the first record in the cache with
@@ -294,9 +313,7 @@ impl Cache {
             .find(|(_, v)| v < &candidate_value)
             .map(|(k, _)| k.clone())
         {
-            if self.map.remove(&key).is_some() {
-                return true;
-            }
+            return self.map.remove(&key).is_some();
         }
 
         false
@@ -406,19 +423,57 @@ mod tests {
 
         c.advance();
 
-        dbg!(&c.map, &c.wlfu, &c.cap);
         let key_4 = Bytes::from("key4");
+        let check_result = c.check(&key_4);
+        assert!(matches!(check_result, CheckResult::Miss));
+        let cv = CacheValue::new(Bytes::from("value4"), 1, 1);
+        assert!(!c.evict(&cv));
         c.try_insert(key_4.clone(), CacheValue::new(Bytes::from("v"), 1, 1));
         let check_result = c.check(&key_4);
-        dbg!(&c.map, &c.wlfu, &c.cap);
         assert!(matches!(check_result, CheckResult::Miss));
         assert_eq!(c.size(), 3);
 
         let check_result = c.check(&key_1);
+        // At this point key_1 is the most demanded in terms of cache score
+        // but it remains WLFU at the same time. This is one of the flaws of cache
+        // but as the next keys will hit cache WLFU will be adjusted
+        // and there is no chance key_1 will be evicted by any record less valuable
+        // then the key_1 so that's generally fine.
+        assert!(matches!(&c.wlfu, Wlfu::Set(_)));
+        if let Wlfu::Set(key) = &c.wlfu {
+            assert_eq!(key, &key_1);
+        }
         assert!(matches!(check_result, CheckResult::Found(_)));
         if let CheckResult::Found(cv) = check_result {
             assert_eq!(cv.score.generation, 2);
         }
-        // еще тестануть update evict evict iter
+
+        let new_value = Bytes::from("new_value");
+        c.refresh_value(&key_1, &new_value);
+
+        let check_result = c.check(&key_1);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        if let CheckResult::Found(cv) = check_result {
+            assert_eq!(cv.data, &new_value);
+            assert_eq!(cv.score.generation, 1);
+            assert_eq!(cv.score.frequency, 5);
+        }
+
+        let _ = c.check(&key_1);
+        let _ = c.check(&key_1);
+        let _ = c.check(&key_1);
+
+        // Check WLFU is still key_1.
+        assert!(matches!(&c.wlfu, Wlfu::Set(_)));
+        if let Wlfu::Set(key) = &c.wlfu {
+            assert_eq!(key, &key_1);
+        }
+        let _ = c.check(&key_1);
+        let _ = c.check(&key_2);
+        // Now WLFU should be key_2.
+        assert!(matches!(&c.wlfu, Wlfu::Set(_)));
+        if let Wlfu::Set(key) = &c.wlfu {
+            assert_eq!(key, &key_2);
+        }
     }
 }

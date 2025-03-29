@@ -172,7 +172,7 @@ impl<T: Storage> Dispatcher<T> {
     fn update_cache(&mut self, data: &MemTable) {
         self.cache.advance();
         for (k, v) in data.map.iter() {
-            self.cache.update(k, v);
+            self.cache.refresh_value(k, v);
         }
     }
 }
