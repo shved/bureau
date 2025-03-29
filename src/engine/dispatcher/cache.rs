@@ -115,6 +115,10 @@ impl CacheValue {
     fn reset_generation(&mut self) {
         self.score.generation = 1;
     }
+
+    fn update_frequency(&mut self, freq: usize) {
+        self.score.frequency = freq;
+    }
 }
 
 impl PartialEq for CacheValue {
@@ -139,16 +143,18 @@ impl Ord for CacheValue {
 
 /// Reflects two different states of the LFU value weither it is set or not.
 /// It is not exactly LFU, but a combination of frequency multiplied by generation
-/// since it is very crutial here for amount of disk reads.
+/// since it is very crutial here for amount of disk reads. So the name stands for
+/// Weighted Least Frequntly Used to articulate that it is not only frequency
+/// that is important here.
 #[derive(Debug, Clone)]
-enum Lfu {
+enum Wlfu {
     Blank,
-    Set { key: Bytes, value: CacheValue },
+    Set(Bytes),
 }
 
-impl Lfu {
-    fn new(key: Bytes, value: CacheValue) -> Self {
-        Self::Set { key, value }
+impl Wlfu {
+    fn new(key: Bytes) -> Self {
+        Self::Set(key)
     }
 
     fn blank() -> Self {
@@ -168,7 +174,7 @@ impl Lfu {
 pub struct Cache {
     map: HashMap<Bytes, CacheValue>,
     frequency: FrequenciesMinSketch,
-    least_req: Lfu,
+    wlfu: Wlfu,
     cap: usize,
 }
 
@@ -177,7 +183,7 @@ impl Cache {
         Self {
             map: HashMap::with_capacity(cap),
             frequency: FrequenciesMinSketch::new(),
-            least_req: Lfu::blank(),
+            wlfu: Wlfu::blank(),
             cap,
         }
     }
@@ -188,34 +194,51 @@ impl Cache {
         // Update frequencies.
         let freq = self.frequency.increment(key);
 
-        // Check if frequency is above threshold.
-        // Adjust the frequency threshold to be cache size
-        // so that empty cache will be quicker to fill.
-        if freq >= self.size() {
-            // Check the cache map.
-            match self.map.get(key) {
-                Some(value) => {
-                    // Update least frequent key in the cache.
-                    match &self.least_req {
-                        Lfu::Set { value: lr_val, .. } => {
-                            if value < lr_val {
-                                self.least_req = Lfu::new(key.clone(), value.clone());
-                            }
-                        }
-                        Lfu::Blank => {
-                            // If LFU not set, let's set it to whatever we have here so that it can be adjusted later.
-                            self.least_req = Lfu::new(key.clone(), value.clone());
-                        }
-                    }
+        // Check the cache map.
+        match self.map.get_mut(key) {
+            Some(value) => {
+                // Update frequency.
+                value.update_frequency(freq);
+                // Update least frequent key in the cache.
+                let nv = value.clone();
+                drop(value);
+                self.update_wlru(key, &nv);
 
-                    return CheckResult::Found(value.clone());
+                return CheckResult::Found(nv);
+            }
+            None => {
+                // Check if frequency is above threshold.
+                // Adjust the frequency threshold to be cache size
+                // so that empty cache will be quicker to fill.
+                if freq >= self.size() {
+                    return CheckResult::Candidate(freq);
                 }
-                None => return CheckResult::Candidate(freq),
             }
         }
 
         // Key is not demanded.
         CheckResult::Miss
+    }
+
+    fn update_wlru(&mut self, key: &Bytes, value: &CacheValue) {
+        match &self.wlfu {
+            Wlfu::Set(wlru_key) => {
+                if *key != wlru_key {
+                    match self.map.get(wlru_key) {
+                        Some(wlru_val) => {
+                            if value < wlru_val {
+                                self.wlfu = Wlfu::new(key.clone());
+                            }
+                        }
+                        None => self.wlfu = Wlfu::new(key.clone()),
+                    }
+                }
+            }
+            Wlfu::Blank => {
+                // If LFU not set, let's set it to whatever we have here so that it can be adjusted later.
+                self.wlfu = Wlfu::new(key.clone());
+            }
+        }
     }
 
     /// Inserts the record into cache. If the cache is full, tries to evict some other record
@@ -244,12 +267,12 @@ impl Cache {
 
     /// Try to evict record from cache to free space for a new record.
     fn evict(&mut self, candidate_value: &CacheValue) -> bool {
-        match &self.least_req {
-            Lfu::Blank => {
+        match &self.wlfu {
+            Wlfu::Blank => {
                 // TODO: It is also possible to just set least_req in this branch so it later be adjusted.
                 return self.evict_iter(candidate_value);
             }
-            Lfu::Set { key, .. } => match self.map.remove(key) {
+            Wlfu::Set { key, .. } => match self.map.remove(key) {
                 Some(_) => return true,
                 None => {
                     if self.evict_iter(candidate_value) {
@@ -280,7 +303,7 @@ impl Cache {
     }
 
     /// Just replaces an old value with the new one if it's in cache.
-    pub fn update(&mut self, key: &Bytes, value: &Bytes) {
+    pub fn refresh_value(&mut self, key: &Bytes, value: &Bytes) {
         if let Some(cache_value) = self.map.get_mut(key) {
             cache_value.data = value.clone();
             // New value also resets generation to 1.
@@ -293,5 +316,109 @@ impl Cache {
         for (_, v) in self.map.iter_mut() {
             v.advance();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_count_min_sketch() {
+        let mut f = FrequenciesMinSketch::new();
+        let key = Bytes::from("hello there");
+        assert_eq!(f.increment(&key), 1);
+        assert_eq!(f.increment(&key), 2);
+    }
+
+    #[test]
+    fn test_cache_value() {
+        let mut cv = CacheValue::new(Bytes::from("payload"), 15, 15);
+        assert_eq!(cv.score(), 225);
+        cv.advance();
+        assert_eq!(cv.score.generation, 16);
+        cv.reset_generation();
+        assert_eq!(cv.score.generation, 1);
+    }
+
+    #[test]
+    fn test_cache() {
+        let mut c = Cache::new(3);
+        let key_1 = Bytes::from("key1");
+        let key_2 = Bytes::from("key2");
+        let key_3 = Bytes::from("key3");
+        assert_eq!(c.size(), 0);
+
+        let check_result = c.check(&key_1);
+        assert!(matches!(check_result, CheckResult::Candidate(_)));
+        if let CheckResult::Candidate(freq) = check_result {
+            assert_eq!(freq, 1);
+        }
+        let check_result = c.check(&key_1);
+        assert!(matches!(check_result, CheckResult::Candidate(_)));
+        if let CheckResult::Candidate(freq) = check_result {
+            assert_eq!(freq, 2);
+            c.try_insert(
+                key_1.clone(),
+                CacheValue::new(Bytes::from("value1"), freq, 1),
+            );
+        }
+        let check_result = c.check(&key_1);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        assert_eq!(c.size(), 1);
+
+        let check_result = c.check(&key_2);
+        assert!(matches!(check_result, CheckResult::Candidate(_)));
+        if let CheckResult::Candidate(freq) = check_result {
+            assert_eq!(freq, 1);
+        }
+        let check_result = c.check(&key_2);
+        assert!(matches!(check_result, CheckResult::Candidate(_)));
+        if let CheckResult::Candidate(freq) = check_result {
+            assert_eq!(freq, 2);
+            c.try_insert(
+                key_2.clone(),
+                CacheValue::new(Bytes::from("value1"), freq, 1),
+            );
+        }
+        let check_result = c.check(&key_2);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        assert_eq!(c.size(), 2);
+
+        assert!(!c.is_full());
+
+        let check_result = c.check(&key_3);
+        assert!(matches!(check_result, CheckResult::Miss));
+        let check_result = c.check(&key_3);
+        assert!(matches!(check_result, CheckResult::Candidate(_)));
+        if let CheckResult::Candidate(freq) = check_result {
+            assert_eq!(freq, 2);
+            c.try_insert(
+                key_3.clone(),
+                CacheValue::new(Bytes::from("value1"), freq, 1),
+            );
+        }
+        let check_result = c.check(&key_3);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        assert_eq!(c.size(), 3);
+
+        assert!(c.is_full());
+
+        c.advance();
+
+        dbg!(&c.map, &c.wlfu, &c.cap);
+        let key_4 = Bytes::from("key4");
+        c.try_insert(key_4.clone(), CacheValue::new(Bytes::from("v"), 1, 1));
+        let check_result = c.check(&key_4);
+        dbg!(&c.map, &c.wlfu, &c.cap);
+        assert!(matches!(check_result, CheckResult::Miss));
+        assert_eq!(c.size(), 3);
+
+        let check_result = c.check(&key_1);
+        assert!(matches!(check_result, CheckResult::Found(_)));
+        if let CheckResult::Found(cv) = check_result {
+            assert_eq!(cv.score.generation, 2);
+        }
+        // еще тестануть update evict evict iter
     }
 }
