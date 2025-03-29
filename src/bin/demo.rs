@@ -28,7 +28,7 @@ static LATENCY_CHART_SIZE: usize = 1024;
 static SET_LATENCIES: [AtomicU64; LATENCY_CHART_SIZE] = unsafe { std::mem::zeroed() };
 static GET_LATENCIES: [AtomicU64; LATENCY_CHART_SIZE] = unsafe { std::mem::zeroed() };
 
-const HIGH_DEMAND_KEYS_CNT: usize = 500;
+const HIGH_DEMAND_KEYS_CNT: usize = 300;
 
 const BAR_HEIGHT: u64 = 10;
 
@@ -106,10 +106,10 @@ async fn main() -> Result<()> {
             let mut rng = StdRng::from_os_rng();
 
             loop {
-                let is_write = rng.random_bool(0.9); // Make it write heavy since we test LSM.
+                let is_write = rng.random_bool(0.7); // Make it write heavy since we test LSM.
                 let reuse_key = rng.random_bool(0.25); // Quarter of the keys will be reused not fresh generated.
                 let request_high_demand_key = rng.random_bool(0.2); // Every fifth key to GET will be from the limited set of high demand keys so that cache is being useful.
-                let push_to_hdkw = rng.random_bool(0.01);
+                let push_to_hdkw = rng.random_bool(0.005);
 
                 let request = if is_write {
                     let key = if reuse_key {
@@ -312,7 +312,7 @@ Press 'q' to stop..."#,
         })?;
 
         // Check for 'q' press to exit
-        if event::poll(Duration::from_millis(500))? {
+        if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.code == KeyCode::Char('q') {
                     break;

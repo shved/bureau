@@ -64,7 +64,7 @@ Doing WAL I had to decide on the persistance strategy. I decided to go with the 
 
 Compaction is initially implemented very straightforward and not effective. In extent that I had to throttle iteration over tables by simply calling sleep for 200 ms to give reads and writes higher priority. Simple and not very informative measures shows that compaction only gives 1-2 ms of average response time which is fine for the first implementation. A better alternatives would be to have a pool of threads for disk interactions, may be sharding, or smarter selective locks that will only block get requests if they are about to use the table that is being in the process of compaction at the moment.
 
-Even though the database is built on top of LSM and it is meant to be quick on writes and slow on reads, I've had an idea to implement an effective cache for LSM reads. The main idea was to make MFU (Most Frequently Used) cache but take into account not only the frequencies of the keys but also generation of the key's table. This is crucial in case of LSM because every table generation means at least one additional disk trip to read and check bloom filter. So that if we have two high-demand keys but one live on the first table whereas the other thouthands tables in the past, it is obvious which value is better for cache. To make cache candidates scoring meet these requirements I choose to just multiply count of a key reads with the generation of the record in sstables index. So that an entry that was requested 100 times and lives on the 10th sstable will have score of 1000. To count keys requests I've implemented a trivial count-min sketch data structure. Least frequently used record in the cache is tracked in the separate attribute and helps to quickly choose candidate for eviction when the cache is already full. Comments in the cache.rs file cover more implementation details.
+Even though the database is built on top of LSM and it is meant to be quick on writes and slow on reads, I've had an idea to implement an effective cache for LSM reads. Keep in mind it is originaly implemented slightly different then the origianl white paper LSM, it is more like a flat list of SStables. So the main idea was to make MFU (Most Frequently Used) cache but take into account not only the frequencies of the keys but also generation of the key's table. This is crucial in this case because every table generation means at least one additional disk trip to read and check bloom filter. So that if we have two high-demand keys but one live on the first table whereas the other thouthands tables in the past, it is obvious which value is better for cache. To make cache candidates scoring meet these requirements I choose to just multiply count of a key reads with the generation of the record in sstables index. So that an entry that was requested 100 times and lives on the 10th sstable will have score of 1000. To count keys requests I've implemented a trivial count-min sketch data structure. Least frequently used record in the cache is tracked in the separate attribute and helps to quickly choose candidate for eviction when the cache is already full. Comments in the cache.rs file cover more implementation details.
 
 ## TODOs
 - [x] change dump Arc 'database' to LSM with channels
@@ -85,7 +85,8 @@ Even though the database is built on top of LSM and it is meant to be quick on w
 - [x] compaction
 - [x] poor performance test
 - [x] cache
-- [ ] update demo.rs so that it display actual distribution and percentile of response times, not only calculated average
+- [ ] better demo.rs with rates and histograms
+- [ ] add more unit tests to dispatcher mod
 - [ ] move paddings and paging concerns from WAL to its fs storage
 - [ ] remake sstable index to VecDequeue
 - [ ] make blocks fill paddings with zeroes to be exactly disk page in size
@@ -93,6 +94,7 @@ Even though the database is built on top of LSM and it is meant to be quick on w
 - [ ] make all const usize and cast them only when encoding data
 - [ ] use different hash functions in count min sketch for better distribution (it is currently 1 function with 4 seeds)
 - [ ] experiment with better disk access concurrency with shared stateful index and thread pool of gets and separate threads for index updates
+- [ ] try to move implementaion of sstables closer to the original LSM-tree white paper 
 - [ ] handle potential integer overflows where possible (cache scoring goes first)
 - [ ] build config from env at the server start
 - [ ] add workflow for testcov
