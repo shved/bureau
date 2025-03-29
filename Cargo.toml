@@ -38,6 +38,8 @@ strum = { version = "0.27.1", features = ["derive"] }
 ratatui = "0.29.0"
 crossterm = "0.28.1"
 parking_lot = "0.12.3"
+ahash = "0.8.11"
+num-traits = "0.2.19"
 
 [dev-dependencies]
 criterion = "0.5.1"
