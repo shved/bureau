@@ -20,14 +20,13 @@ amount of clients can be set with --clients=X option like that
 ```
 cargo run --bin bureau-demo -- --clients=50
 ```
-There are default of 30 clients. Reads/writes ratio is set to 0.9 in favour of writes,
-and the ratio of rewriting old keys is set to 0.5 which makes the compaction pretty heavy.
-You can play around with those numbers in the demo.rs code as well.
+There are default of 30 clients. Reads/writes ratio is set to 0.7 in favour of writes, and the ratio of rewriting old keys is set to 0.3 which makes the compaction pretty heavy. You can play around with those numbers in the demo.rs code as well.
 
 If you want to clean up the files writen (WAL and data), call
 ```
 make dev.clean
 ```
+Demo caries statistics a bunch of atomics (this way it looks cool). I've noticed sometimes amount of writes and reads isn't match, but it's because of the memory reordering issues I've didn't cover. It is all Acquire and Release and I did not try it out on an ARM machine so it could potentially be even worse. Anyway if you just curious depending on the time the test runs, this database on the given load pattern gives about 800-3000 SET requests per second and 500-1000 GET requests with the average write being 1-2ms but reads are growing as the database grows since there is yet no thread pool for disk access and the database is a flat data files array, no any extra indexing structure is used (yet).
 
 ## Case study
 Here goes the list of the most peculiar and fun stuff I've met so far doing this project.
@@ -85,7 +84,7 @@ Even though the database is built on top of LSM and it is meant to be quick on w
 - [x] compaction
 - [x] poor performance test
 - [x] cache
-- [ ] better demo.rs with rates and histograms
+- [x] better demo.rs with rates and histograms
 - [ ] add more unit tests to dispatcher mod
 - [ ] move paddings and paging concerns from WAL to its fs storage
 - [ ] remake sstable index to VecDequeue

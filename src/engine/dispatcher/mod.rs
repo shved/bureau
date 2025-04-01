@@ -9,7 +9,7 @@ use crate::{Responder, Result, Storage};
 use bytes::Bytes;
 use index::Index;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, error};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -104,6 +104,7 @@ impl<T: Storage> Dispatcher<T> {
                                     continue;
                                 }
                                 Err(e) => {
+                                    error!("reading value from disk: {}", &e);
                                     response = Err(e);
                                     break;
                                 }

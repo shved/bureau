@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Read Requests: {}", app_result.reads_sum);
     println!("Successful Reads: {}", app_result.reads_suc_sum);
     println!("SSTables Writen: {}", app_result.sstables_written);
-    println!("Data Writen: {}", app_result.data_writen);
+    println!("Data Writen: {}Mb", app_result.data_writen);
 
     Ok(())
 }
@@ -425,23 +425,36 @@ fn spawn_client(
             match &request {
                 Request::Set { key, .. } => {
                     metrics.write_requests.fetch_add(1, Ordering::Release);
-                    if response.is_ok() {
-                        keys_set.write().insert(key.clone());
-                        if push_to_hdkw {
-                            let mut hdkw_lock = high_demand_keys_window.write();
-                            if hdkw_lock.len() == HIGH_DEMAND_KEYS_LEN {
-                                hdkw_lock.pop_back();
+                    match response {
+                        Ok(Response::Ok | Response::OkValue { .. }) => {
+                            keys_set.write().insert(key.clone());
+                            if push_to_hdkw {
+                                let mut hdkw_lock = high_demand_keys_window.write();
+                                if hdkw_lock.len() == HIGH_DEMAND_KEYS_LEN {
+                                    hdkw_lock.pop_back();
+                                }
+                                hdkw_lock.push_front(key.clone());
+                                drop(hdkw_lock);
                             }
-                            hdkw_lock.push_front(key.clone());
-                            drop(hdkw_lock);
+                            metrics.write_success.fetch_add(1, Ordering::Release);
                         }
-                        metrics.write_success.fetch_add(1, Ordering::Release);
+                        Ok(Response::Error { message }) => {
+                            panic!("response error: {:?}", message);
+                        }
+                        Err(e) => panic!("request failed: {}", e),
                     }
                 }
                 Request::Get { .. } => {
                     metrics.read_requests.fetch_add(1, Ordering::Release);
-                    if let Ok(Response::OkValue { .. }) = response {
-                        metrics.read_success.fetch_add(1, Ordering::Release);
+                    match response {
+                        Ok(Response::OkValue { .. }) => {
+                            metrics.read_success.fetch_add(1, Ordering::Release);
+                        }
+                        Ok(Response::Ok) => (),
+                        Ok(Response::Error { message }) => {
+                            panic!("response error: {:?}", message);
+                        }
+                        Err(e) => panic!("request failed: {}", e),
                     }
                 }
             }
