@@ -1,36 +1,35 @@
-use anyhow::Result;
-use bureau::client::Client;
-use bureau::protocol::{Request, Response};
+use bureau::{
+    client::Client,
+    protocol::{Request, Response},
+};
 use bytes::Bytes;
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
-use crossterm::ExecutableCommand;
-use num_traits::cast;
 use parking_lot::RwLock;
-use rand::{distr::Uniform, prelude::*, rngs::StdRng};
-use ratatui::backend::CrosstermBackend;
-use ratatui::widgets::Paragraph;
-use ratatui::Terminal;
+use rand::{
+    distr::{Distribution, Uniform},
+    prelude::IteratorRandom,
+    rngs::StdRng,
+    Rng, SeedableRng,
+};
+use ratatui::{
+    crossterm::event::{self, Event, KeyCode},
+    layout::{Constraint, Direction, Layout, Rect},
+    text::Line,
+    widgets::{Bar, BarChart, BarGroup, Block, Paragraph},
+    DefaultTerminal, Frame,
+};
 use std::collections::{HashSet, VecDeque};
-use std::io;
+use std::error::Error;
+use std::result::Result;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::{task, time::Instant};
+use std::time::Instant;
+use tokio::task;
 
-// Latencies of the requests are saved into the array of atomics. The index of the entry
-// is effectively a latency in milliseconds here and the value is amount of requests
-// finished in the given milliseconds.
-static LATENCY_CHART_SIZE: usize = 1024;
-static SET_LATENCIES: [AtomicU64; LATENCY_CHART_SIZE] = unsafe { std::mem::zeroed() };
-static GET_LATENCIES: [AtomicU64; LATENCY_CHART_SIZE] = unsafe { std::mem::zeroed() };
+static LATENCY_CHART_LEN: usize = 128;
 
-const HIGH_DEMAND_KEYS_CNT: usize = 300;
-
-const BAR_HEIGHT: u64 = 10;
+const HIGH_DEMAND_KEYS_LEN: usize = 300;
 
 #[derive(Parser)]
 struct Args {
@@ -41,327 +40,444 @@ struct Args {
     address: String,
 }
 
-struct Metrics {
-    read_requests: AtomicU64,
-    write_requests: AtomicU64,
-    read_success: AtomicU64,
-    write_success: AtomicU64,
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+
+    let metrics = Arc::new(AtomicMetrics::new());
+
+    color_eyre::install()?;
+    let terminal = ratatui::init();
+    let app = App::new(&metrics);
+    spawn_clients(args.clients, args.address, Arc::clone(&metrics));
+    let app_result = app.run(terminal)?;
+    ratatui::restore();
+
+    println!(
+        "Final stats after running for {} seconds:",
+        app_result.run_seconds
+    );
+    println!("Write Requests: {}", app_result.writes_sum);
+    println!("Successful Writes: {}", app_result.writes_suc_sum);
+    println!("Read Requests: {}", app_result.reads_sum);
+    println!("Successful Reads: {}", app_result.reads_suc_sum);
+    println!("SSTables Writen: {}", app_result.sstables_written);
+    println!("Data Writen: {}", app_result.data_writen);
+
+    Ok(())
 }
 
-impl Metrics {
+struct FrameData {
+    reads: u64,
+    reads_suc: u64,
+    writes: u64,
+    writes_suc: u64,
+    set_latencies: [u64; LATENCY_CHART_LEN],
+    get_latencies: [u64; LATENCY_CHART_LEN],
+}
+
+impl FrameData {
+    fn new() -> Self {
+        Self {
+            reads: u64::default(),
+            reads_suc: u64::default(),
+            writes: u64::default(),
+            writes_suc: u64::default(),
+            set_latencies: [0; LATENCY_CHART_LEN],
+            get_latencies: [0; LATENCY_CHART_LEN],
+        }
+    }
+}
+
+struct AtomicMetrics {
+    read_requests: AtomicU64,
+    read_success: AtomicU64,
+    write_requests: AtomicU64,
+    write_success: AtomicU64,
+    set_latencies: [AtomicU64; LATENCY_CHART_LEN],
+    get_latencies: [AtomicU64; LATENCY_CHART_LEN],
+}
+
+impl AtomicMetrics {
     fn new() -> Self {
         Self {
             read_requests: AtomicU64::new(0),
-            write_requests: AtomicU64::new(0),
             read_success: AtomicU64::new(0),
+            write_requests: AtomicU64::new(0),
             write_success: AtomicU64::new(0),
+            set_latencies: std::array::from_fn(|_| AtomicU64::new(0)),
+            get_latencies: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 
-    fn read_requests(&self) -> u64 {
-        self.read_requests.load(Ordering::Acquire)
+    /// Very sloppy and chill function that flaws guaranties, but since it is stats Im good with it.
+    fn reset(&self) -> FrameData {
+        let reads = self.read_requests.swap(0, Ordering::Release);
+        let writes = self.write_requests.swap(0, Ordering::Release);
+        let reads_suc = self.read_success.swap(0, Ordering::Release);
+        let writes_suc = self.write_success.swap(0, Ordering::Release);
+        let mut set_latencies: [u64; LATENCY_CHART_LEN] = [0; LATENCY_CHART_LEN];
+        let mut get_latencies: [u64; LATENCY_CHART_LEN] = [0; LATENCY_CHART_LEN];
+        for i in 0..LATENCY_CHART_LEN {
+            let set = self.set_latencies[i].swap(0, Ordering::Release);
+            set_latencies[i] = set;
+            let get = self.get_latencies[i].swap(0, Ordering::Release);
+            get_latencies[i] = get;
+        }
+
+        FrameData {
+            reads,
+            reads_suc,
+            writes,
+            writes_suc,
+            set_latencies,
+            get_latencies,
+        }
     }
 
-    fn write_requests(&self) -> u64 {
-        self.write_requests.load(Ordering::Acquire)
-    }
+    fn update_latencies(&self, req: &Request, latency: usize) {
+        if latency >= LATENCY_CHART_LEN {
+            return;
+        }
 
-    fn read_success(&self) -> u64 {
-        self.read_success.load(Ordering::Acquire)
-    }
-
-    fn write_success(&self) -> u64 {
-        self.write_success.load(Ordering::Acquire)
+        match req {
+            Request::Set { .. } => {
+                self.set_latencies[latency].fetch_add(1, Ordering::Release);
+            }
+            Request::Get { .. } => {
+                self.get_latencies[latency].fetch_add(1, Ordering::Release);
+            }
+        }
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
+struct AppResult {
+    run_seconds: usize,
+    writes_sum: u64,
+    writes_suc_sum: u64,
+    reads_sum: u64,
+    reads_suc_sum: u64,
+    sstables_written: usize,
+    data_writen: f64,
+}
 
-    let metrics = Arc::new(Metrics::new());
-    // Save the keys set to request them again.
+struct App<'a> {
+    metrics: &'a AtomicMetrics,
+    run_seconds: usize,
+    writes_sum: u64,
+    writes_suc_sum: u64,
+    reads_sum: u64,
+    reads_suc_sum: u64,
+}
+
+impl<'a> App<'a> {
+    pub fn new(metrics: &'a AtomicMetrics) -> Self {
+        Self {
+            metrics,
+            run_seconds: 0,
+            writes_sum: 0,
+            writes_suc_sum: 0,
+            reads_sum: 0,
+            reads_suc_sum: 0,
+        }
+    }
+
+    fn run(mut self, mut terminal: DefaultTerminal) -> Result<AppResult, Box<dyn Error>> {
+        let tick_rate = Duration::from_secs(1);
+        let mut frame_data = FrameData::new();
+        let mut last_tick = Instant::now();
+        loop {
+            terminal.draw(|frame| self.draw(frame, &frame_data))?;
+
+            let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+            if self.handle_exit(timeout)? {
+                return Ok(self.app_result());
+            }
+            if last_tick.elapsed() >= tick_rate {
+                frame_data = self.on_tick();
+                last_tick = Instant::now();
+            }
+        }
+    }
+
+    fn app_result(&self) -> AppResult {
+        let (files, size) = data_stat();
+
+        AppResult {
+            run_seconds: self.run_seconds,
+            writes_sum: self.writes_sum,
+            writes_suc_sum: self.writes_suc_sum,
+            reads_sum: self.reads_sum,
+            reads_suc_sum: self.reads_suc_sum,
+            sstables_written: files,
+            data_writen: size,
+        }
+    }
+
+    fn on_tick(&mut self) -> FrameData {
+        let frame_data = self.metrics.reset();
+        self.writes_sum += frame_data.writes;
+        self.writes_suc_sum += frame_data.writes_suc;
+        self.reads_sum += frame_data.reads;
+        self.reads_suc_sum += frame_data.reads_suc;
+        self.run_seconds += 1;
+
+        frame_data
+    }
+
+    fn draw(&self, frame: &mut Frame, frame_data: &FrameData) {
+        let layout = layout(frame.area());
+
+        self.render_req_rates(frame, layout[0], frame_data);
+        self.render_set_latency_histogram(frame, layout[1], frame_data);
+        self.render_get_latency_histogram(frame, layout[2], frame_data);
+        self.render_stats(frame, layout[3]);
+    }
+
+    fn render_req_rates(&self, frame: &mut Frame, area: Rect, data: &FrameData) {
+        let bars = BarGroup::default().bars(&[
+            Bar::default().label(Line::from("SET")).value(data.writes),
+            Bar::default().label(Line::from("GET")).value(data.reads),
+        ]);
+
+        let chart = BarChart::default()
+            .block(Block::bordered().title("Requests / Second"))
+            .direction(Direction::Horizontal)
+            .data(bars)
+            .bar_gap(0)
+            .bar_width(3);
+
+        frame.render_widget(chart, area);
+    }
+
+    fn render_set_latency_histogram(&self, frame: &mut Frame, area: Rect, data: &FrameData) {
+        let bars: Vec<Bar> = data
+            .set_latencies
+            .iter()
+            .enumerate()
+            .map(|(i, l)| Bar::default().value(*l).label(Line::from(format!("{i}ms"))))
+            .collect();
+
+        let chart = BarChart::default()
+            .data(BarGroup::default().bars(&bars))
+            .block(Block::bordered().title("SET Requests Latency Distribution"))
+            .direction(Direction::Vertical)
+            .bar_gap(1)
+            .bar_width(3);
+
+        frame.render_widget(chart, area);
+    }
+
+    fn render_get_latency_histogram(&self, frame: &mut Frame, area: Rect, data: &FrameData) {
+        let bars: Vec<Bar> = data
+            .get_latencies
+            .iter()
+            .enumerate()
+            .map(|(i, l)| Bar::default().value(*l).label(Line::from(format!("{i}ms"))))
+            .collect();
+
+        let chart = BarChart::default()
+            .data(BarGroup::default().bars(&bars))
+            .block(Block::bordered().title("GET Requests Latency Distribution"))
+            .direction(Direction::Vertical)
+            .bar_gap(1)
+            .bar_width(3);
+
+        frame.render_widget(chart, area);
+    }
+
+    fn render_stats(&self, frame: &mut Frame, area: Rect) {
+        let (tables_count, total_size) = data_stat();
+
+        let text = format!(
+            r#"Other Stats
+Seconds Run: {}
+Read Requests: {} 
+Successful Reads: {} 
+Write Requests: {} 
+Successful Writes: {} 
+Tables written: {} ({}Mb of data)
+Press 'q' to stop..."#,
+            self.run_seconds,
+            self.reads_sum,
+            self.reads_suc_sum,
+            self.writes_sum,
+            self.writes_suc_sum,
+            tables_count,
+            total_size,
+        );
+
+        let paragraph = Paragraph::new(text);
+        frame.render_widget(paragraph, area);
+    }
+
+    fn handle_exit(&mut self, timeout: Duration) -> Result<bool, Box<dyn Error>> {
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.code == KeyCode::Char('q') {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+}
+
+fn spawn_clients(clients_cnt: usize, addr: String, metrics: Arc<AtomicMetrics>) {
     let keys_set = Arc::new(RwLock::new(HashSet::new()));
-    // A window of most demand keys so cache have some work to do here.
+    // Slow sliding window of most demand keys so cache have some work to do here.
     let high_demand_keys_window =
-        Arc::new(RwLock::new(VecDeque::with_capacity(HIGH_DEMAND_KEYS_CNT)));
+        Arc::new(RwLock::new(VecDeque::with_capacity(HIGH_DEMAND_KEYS_LEN)));
 
-    for _ in 0..args.clients {
-        let addr = args.address.clone();
-        let metrics = Arc::clone(&metrics);
+    for _ in 0..clients_cnt {
+        let addr = addr.clone();
         let keys_set = Arc::clone(&keys_set);
         let high_demand_keys_window = Arc::clone(&high_demand_keys_window);
+        spawn_client(
+            Arc::clone(&keys_set),
+            Arc::clone(&high_demand_keys_window),
+            addr,
+            Arc::clone(&metrics),
+        );
+    }
+}
 
-        task::spawn(async move {
-            let mut client = match Client::connect(&addr).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Failed to connect: {}", e);
-                    return;
-                }
-            };
+fn spawn_client(
+    keys_set: Arc<RwLock<HashSet<Bytes>>>,
+    high_demand_keys_window: Arc<RwLock<VecDeque<Bytes>>>,
+    addr: String,
+    metrics: Arc<AtomicMetrics>,
+) {
+    task::spawn(async move {
+        let mut client = match Client::connect(&addr).await {
+            Ok(c) => c,
+            Err(e) => {
+                panic!("Failed to connect: {}", e);
+            }
+        };
 
-            let key_dist = Uniform::new_inclusive(1, 200).unwrap();
-            let val_dist = Uniform::new_inclusive(1, 500).unwrap();
-            let mut rng = StdRng::from_os_rng();
+        let key_dist = Uniform::new_inclusive(1, 200).unwrap();
+        let val_dist = Uniform::new_inclusive(1, 500).unwrap();
+        let mut rng = StdRng::from_os_rng();
 
-            loop {
-                let is_write = rng.random_bool(0.7); // Make it write heavy since we test LSM.
-                let reuse_key = rng.random_bool(0.25); // Quarter of the keys will be reused not fresh generated.
-                let request_high_demand_key = rng.random_bool(0.2); // Every fifth key to GET will be from the limited set of high demand keys so that cache is being useful.
-                let push_to_hdkw = rng.random_bool(0.005);
+        loop {
+            let is_write = rng.random_bool(0.7); // Make it write heavy since we test (kind of) LSM.
+            let reuse_key = rng.random_bool(0.25); // Quarter of the keys will be reused not fresh generated.
+            let request_high_demand_key = rng.random_bool(0.2); // Every fifth key to GET will be from the limited set of high demand keys so that cache is being useful.
+            let push_to_hdkw = rng.random_bool(0.005); // Probability that a new key will go into a high demand team.
 
-                let request = if is_write {
-                    let key = if reuse_key {
-                        let keys = keys_set.read();
-                        if keys.is_empty() {
-                            continue;
-                        }
-                        keys.iter().choose(&mut rng).cloned().unwrap()
-                    } else {
-                        Bytes::from(
-                            (0..key_dist.sample(&mut rng))
-                                .map(|_| rng.random())
-                                .collect::<Vec<u8>>(),
-                        )
-                    };
-
-                    let value = Bytes::from(
-                        (0..val_dist.sample(&mut rng))
-                            .map(|_| rng.random())
-                            .collect::<Vec<u8>>(),
-                    );
-
-                    Request::Set {
-                        key: key.clone(),
-                        value,
-                    }
-                } else if request_high_demand_key {
-                    let keys = high_demand_keys_window.read();
-                    if keys.is_empty() {
-                        continue;
-                    }
-                    let random_key = keys.iter().choose(&mut rng).cloned();
-                    drop(keys);
-                    match random_key {
-                        Some(key) => Request::Get { key },
-                        None => continue,
-                    }
-                } else {
+            let request = if is_write {
+                let key = if reuse_key {
                     let keys = keys_set.read();
                     if keys.is_empty() {
                         continue;
                     }
-                    let random_key = keys.iter().choose(&mut rng).cloned();
-                    drop(keys);
-                    match random_key {
-                        Some(key) => Request::Get { key },
-                        None => continue,
-                    }
+                    keys.iter().choose(&mut rng).cloned().unwrap()
+                } else {
+                    Bytes::from(
+                        (0..key_dist.sample(&mut rng))
+                            .map(|_| rng.random())
+                            .collect::<Vec<u8>>(),
+                    )
                 };
 
-                let start_time = Instant::now();
-                let response = client.send(request.clone()).await;
-                let elapsed = start_time.elapsed().as_millis() as usize;
+                let value = Bytes::from(
+                    (0..val_dist.sample(&mut rng))
+                        .map(|_| rng.random())
+                        .collect::<Vec<u8>>(),
+                );
 
-                update_latencies(&request, elapsed);
+                Request::Set {
+                    key: key.clone(),
+                    value,
+                }
+            } else if request_high_demand_key {
+                let keys = high_demand_keys_window.read();
+                if keys.is_empty() {
+                    continue;
+                }
+                let random_key = keys.iter().choose(&mut rng).cloned();
+                drop(keys);
+                match random_key {
+                    Some(key) => Request::Get { key },
+                    None => continue,
+                }
+            } else {
+                let keys = keys_set.read();
+                if keys.is_empty() {
+                    continue;
+                }
+                let random_key = keys.iter().choose(&mut rng).cloned();
+                drop(keys);
+                match random_key {
+                    Some(key) => Request::Get { key },
+                    None => continue,
+                }
+            };
 
-                match &request {
-                    Request::Set { key, .. } => {
-                        metrics.write_requests.fetch_add(1, Ordering::Release);
-                        if response.is_ok() {
-                            keys_set.write().insert(key.clone());
-                            if push_to_hdkw {
-                                let mut hdkw_lock = high_demand_keys_window.write();
-                                if hdkw_lock.len() == HIGH_DEMAND_KEYS_CNT {
-                                    hdkw_lock.pop_back();
-                                }
-                                hdkw_lock.push_front(key.clone());
-                                drop(hdkw_lock);
+            let start_time = Instant::now();
+            let response = client.send(request.clone()).await;
+            let elapsed = start_time.elapsed().as_millis() as usize;
+
+            metrics.update_latencies(&request, elapsed);
+
+            match &request {
+                Request::Set { key, .. } => {
+                    metrics.write_requests.fetch_add(1, Ordering::Release);
+                    if response.is_ok() {
+                        keys_set.write().insert(key.clone());
+                        if push_to_hdkw {
+                            let mut hdkw_lock = high_demand_keys_window.write();
+                            if hdkw_lock.len() == HIGH_DEMAND_KEYS_LEN {
+                                hdkw_lock.pop_back();
                             }
-                            metrics.write_success.fetch_add(1, Ordering::Release);
+                            hdkw_lock.push_front(key.clone());
+                            drop(hdkw_lock);
                         }
-                    }
-                    Request::Get { .. } => {
-                        metrics.read_requests.fetch_add(1, Ordering::Release);
-                        if let Ok(Response::OkValue { .. }) = response {
-                            metrics.read_success.fetch_add(1, Ordering::Release);
-                        }
+                        metrics.write_success.fetch_add(1, Ordering::Release);
                     }
                 }
+                Request::Get { .. } => {
+                    metrics.read_requests.fetch_add(1, Ordering::Release);
+                    if let Ok(Response::OkValue { .. }) = response {
+                        metrics.read_success.fetch_add(1, Ordering::Release);
+                    }
+                }
             }
-        });
-    }
-
-    start_tui(metrics).await?;
-
-    Ok(())
+        }
+    });
 }
 
-fn update_latencies(req: &Request, latency: usize) {
-    if latency >= LATENCY_CHART_SIZE {
-        return;
-    }
+fn data_stat() -> (usize, f64) {
+    let mut total_size = 0;
+    let mut count = 0;
 
-    match req {
-        Request::Set { .. } => {
-            SET_LATENCIES[latency].fetch_add(1, Ordering::Release);
-        }
-        Request::Get { .. } => {
-            GET_LATENCIES[latency].fetch_add(1, Ordering::Release);
-        }
-    }
-}
-
-async fn start_tui(metrics: Arc<Metrics>) -> Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    stdout.execute(EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    let start_time = Instant::now();
-
-    loop {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let chunks = ratatui::layout::Layout::default()
-                .direction(ratatui::layout::Direction::Vertical)
-                .constraints([
-                    ratatui::layout::Constraint::Percentage(40), // Histogram occupies 40%
-                    ratatui::layout::Constraint::Percentage(40), // Histogram occupies 40%
-                    ratatui::layout::Constraint::Percentage(20), // Text summary below
-                ])
-                .split(area);
-
-            let mut max_set_latency: u64 = 0;
-            let mut max_get_latency: u64 = 0;
-            let mut set_hist_data = Vec::new();
-            let mut get_hist_data = Vec::new();
-            for i in 0..69 {
-                let set_latency = SET_LATENCIES[i].load(Ordering::Acquire);
-                let get_latency = GET_LATENCIES[i].load(Ordering::Acquire);
-                if set_latency > max_set_latency {
-                    max_set_latency = set_latency;
-                }
-                if get_latency > max_get_latency {
-                    max_get_latency = get_latency;
-                }
-                set_hist_data.push((format!("{}", i), set_latency));
-                get_hist_data.push((format!("{}", i), get_latency));
-            }
-
-            let set_hist_labels: Vec<String> = set_hist_data
-                .iter()
-                .map(|(label, _)| label.clone())
-                .collect();
-
-            let set_hist_display: Vec<(&str, u64)> = set_hist_labels
-                .iter()
-                .zip(
-                    set_hist_data
-                        .iter()
-                        .map(|(_, value)| bar_height(max_set_latency, *value)),
-                )
-                .map(|(label, value)| (label.as_str(), value))
-                .collect();
-
-            let set_barchart = ratatui::widgets::BarChart::default()
-                .block(ratatui::widgets::Block::default().title("SET Latency Histogram"))
-                .bar_width(2)
-                .data(&set_hist_display)
-                .max(10);
-
-            let get_hist_labels: Vec<String> = get_hist_data
-                .iter()
-                .map(|(label, _)| label.clone())
-                .collect();
-
-            let get_hist_display: Vec<(&str, u64)> = get_hist_labels
-                .iter()
-                .zip(
-                    get_hist_data
-                        .iter()
-                        .map(|(_, value)| bar_height(max_get_latency, *value)),
-                )
-                .map(|(label, value)| (label.as_str(), value))
-                .collect();
-
-            let get_barchart = ratatui::widgets::BarChart::default()
-                .block(ratatui::widgets::Block::default().title("GET Latency Histogram"))
-                .bar_width(2)
-                .data(&get_hist_display)
-                .max(BAR_HEIGHT);
-
-            let text = format!(
-                r#"Database Load Test
-Read Requests: {} 
-Write Requests: {} 
-Successful Reads: {} 
-Successful Writes: {} 
-Press 'q' to stop..."#,
-                metrics.read_requests(),
-                metrics.write_requests(),
-                metrics.read_success(),
-                metrics.write_success()
-            );
-            let paragraph = Paragraph::new(text);
-
-            frame.render_widget(set_barchart, chunks[0]);
-            frame.render_widget(get_barchart, chunks[1]);
-            frame.render_widget(paragraph, chunks[2]);
-        })?;
-
-        // Check for 'q' press to exit
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
-                }
+    if let Ok(entries) = std::fs::read_dir("var/lib/bureau") {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                total_size += metadata.len();
+                count += 1;
             }
         }
     }
 
-    let total_elapsed = start_time.elapsed();
-
-    disable_raw_mode()?;
-    io::stdout().execute(LeaveAlternateScreen)?;
-
-    println!("Final Stats:");
-    println!("Read Requests: {}", metrics.read_requests());
-    println!("Write Requests: {}", metrics.write_requests());
-    println!("Successful Reads: {}", metrics.read_success());
-    println!("Successful Writes: {}", metrics.write_success());
-
-    let total_sets = metrics.write_success();
-    let total_gets = metrics.read_success();
-    let avg_set_time = if total_sets > 0 {
-        (0..LATENCY_CHART_SIZE)
-            .map(|i| SET_LATENCIES[i].load(Ordering::Relaxed) * i as u64)
-            .sum::<u64>()
-            / total_sets
-    } else {
-        0
-    };
-    let avg_get_time = if total_gets > 0 {
-        (0..LATENCY_CHART_SIZE)
-            .map(|i| GET_LATENCIES[i].load(Ordering::Relaxed) * i as u64)
-            .sum::<u64>()
-            / total_gets
-    } else {
-        0
-    };
-
-    println!("Average Set Request Time: {} ms", avg_set_time);
-    println!("Average Get Request Time: {} ms", avg_get_time);
-    println!("Total Elapsed Time: {:.2?}", total_elapsed);
-
-    Ok(())
+    (count, bytes_to_mb(total_size))
 }
 
-fn bar_height(max: u64, cur: u64) -> u64 {
-    if max == 0 {
-        return 0;
-    }
+fn bytes_to_mb(bytes: u64) -> f64 {
+    (bytes as f64 / 1_048_576.0 * 100.0).round() / 100.0
+}
 
-    cast(f64::from(cur as u32) / f64::from(max as u32) * f64::from(BAR_HEIGHT as u32)).unwrap()
+fn layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    // TODO: Wrap it into another rect so that window has some padding with a set of constraints.
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(20), // Req/Sec Rates
+            Constraint::Percentage(30), // Set Latency Histogram
+            Constraint::Percentage(30), // Get Latency Histogram
+            Constraint::Percentage(20), // Legend
+        ])
+        .split(area)
 }
