@@ -55,7 +55,7 @@ impl<T: Storage> Dispatcher<T> {
     ) -> std::result::Result<Self, anyhow::Error> {
         let mut entries = storage.list_entries()?;
         let index = Index::new(&mut entries);
-        let cache = Cache::new(100);
+        let cache = Cache::new(4000);
 
         Ok(Dispatcher {
             cmd_rx,

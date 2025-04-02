@@ -1,5 +1,5 @@
 # Bureau 🗃️
-Bureau is the key-value database based on LSM-tree-like algorithm. Not exactly the LSM but somewhat same. Instead of having layers of SSTs, I just have a sequential list of them. The project has two goals. First, it helps me getting comfortable with Rust language. Second, I'm really curious about databases internals (currently going through an excellent set of lectures [here](https://youtube.com/playlist?list=PLSE8ODhjZXjaKScG3l0nuOiDTTqpfnWFf&si=kDk7n-zLPoWhAbBy)) and this project is just my lab puppet to put my fingers into it. A brief coverage of the most interesting implementation outcomes goes further. So, obviously this is not a production grade database. Given that, there is a list of what it does not do:
+Bureau is the key-value database based on LSM-tree-like algorithm. Not exactly the LSM but somewhat same. Instead of having layers of SSTs, I just have a sequential list of them. Which is to be changed later. The project has two goals. First, it helps me getting comfortable with Rust language. Second, I'm really curious about databases internals (currently going through an excellent set of lectures [here](https://youtube.com/playlist?list=PLSE8ODhjZXjaKScG3l0nuOiDTTqpfnWFf&si=kDk7n-zLPoWhAbBy)) and this project is just my lab puppet to put my fingers into it. A brief coverage of the most interesting implementation outcomes goes further. So, obviously this is not a production grade database. Given that, there is a list of what it does not do:
 - does not support delete key
 - does not support complex data types (e.g. collections)
 - does not support any authentication facility
@@ -26,7 +26,7 @@ If you want to clean up the files writen (WAL and data), call
 ```
 make dev.clean
 ```
-Demo caries statistics a bunch of atomics (this way it looks cool). I've noticed sometimes amount of writes and reads isn't match, but it's because of the memory reordering issues I've didn't cover. It is all Acquire and Release and I did not try it out on an ARM machine so it could potentially be even worse. Anyway if you just curious depending on the time the test runs, this database on the given load pattern gives about 800-3000 SET requests per second and 500-1000 GET requests with the average write being 1-2ms but reads are growing as the database grows since there is yet no thread pool for disk access and the database is a flat data files array, no any extra indexing structure is used (yet).
+Demo caries statistics a bunch of atomics (this way it looks cool). I've noticed sometimes amount of writes and reads isn't match, but it's because of the memory reordering issues I didn't cover. If a real error will be thrown in the process of test run you will see it in the server logs. It is all Acquire and Release and I did not try it out on an ARM machine so it could potentially be even worse. Anyway if you just curious depending on the time the test runs, this database on the given load pattern gives about 800-3000 SET requests per second and 500-1000 GET requests with the average write being 1-2ms but reads are growing as the database grows since there is yet no thread pool for disk access and the database is a flat data files array, no any extra indexing structure is used (yet).
 
 ## Case study
 Here goes the list of the most peculiar and fun stuff I've met so far doing this project.
@@ -92,12 +92,14 @@ Even though the database is built on top of LSM and it is meant to be quick on w
 - [ ] wrap in-memory WAL implementation in Arc to cover more cases with unit tests
 - [ ] make all const usize and cast them only when encoding data
 - [ ] use different hash functions in count min sketch for better distribution (it is currently 1 function with 4 seeds)
+- [ ] make similar cache of bloom filters for the most requested and old tables
+- [ ] introduce leveled compaction to merge older tables into bigger chunks
 - [ ] experiment with better disk access concurrency with shared stateful index and thread pool of gets and separate threads for index updates
-- [ ] try to move implementaion of sstables closer to the original LSM-tree white paper 
 - [ ] handle potential integer overflows where possible (cache scoring goes first)
 - [ ] build config from env at the server start
 - [ ] add workflow for testcov
 - [ ] make bin crate alfa version
+- [ ] experiment with memory arena for MemTable that is always living in RAM to reduce extra allocations
 - [ ] make a statistics unit
   - [ ] keep track of reads from deep sstables to put frequent old values to cache for longer
   - [ ] keep track of average (or better median) key-value pair size to better predict the moment to flush memtable to disk (make it based on histogram)
