@@ -72,8 +72,8 @@ struct FrameData {
     reads_suc: u64,
     writes: u64,
     writes_suc: u64,
-    set_latencies: [u64; LATENCY_CHART_LEN],
-    get_latencies: [u64; LATENCY_CHART_LEN],
+    set_latencies: Vec<u64>,
+    get_latencies: Vec<u64>,
 }
 
 impl FrameData {
@@ -83,8 +83,8 @@ impl FrameData {
             reads_suc: u64::default(),
             writes: u64::default(),
             writes_suc: u64::default(),
-            set_latencies: [0; LATENCY_CHART_LEN],
-            get_latencies: [0; LATENCY_CHART_LEN],
+            set_latencies: [0; LATENCY_CHART_LEN].to_vec(),
+            get_latencies: [0; LATENCY_CHART_LEN].to_vec(),
         }
     }
 }
@@ -116,8 +116,8 @@ impl AtomicMetrics {
         let writes = self.write_requests.swap(0, Ordering::Release);
         let reads_suc = self.read_success.swap(0, Ordering::Release);
         let writes_suc = self.write_success.swap(0, Ordering::Release);
-        let mut set_latencies: [u64; LATENCY_CHART_LEN] = [0; LATENCY_CHART_LEN];
-        let mut get_latencies: [u64; LATENCY_CHART_LEN] = [0; LATENCY_CHART_LEN];
+        let mut set_latencies = [0; LATENCY_CHART_LEN].to_vec();
+        let mut get_latencies = [0; LATENCY_CHART_LEN].to_vec();
         for i in 0..LATENCY_CHART_LEN {
             let set = self.set_latencies[i].swap(0, Ordering::Release);
             set_latencies[i] = set;
