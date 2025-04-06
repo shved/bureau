@@ -107,7 +107,7 @@ impl<W: WalStorage> Engine<W> {
         while let Some(cmd) = self.input_rx.recv().await {
             match cmd {
                 Command::Get { key, responder } => {
-                    match self.get_from_mem(&key) {
+                    match self.memtable.get(&key) {
                         Some(value) => {
                             let _ = responder.send(Ok(Some(value)));
                         }
@@ -190,15 +190,6 @@ impl<W: WalStorage> Engine<W> {
         let _ = compaction_join_handle.await;
 
         Ok(())
-    }
-
-    /// It only checks hot spots: cache, memtable.
-    fn get_from_mem(&self, key: &Bytes) -> Option<Bytes> {
-        if let Some(value) = self.memtable.get(key) {
-            return Some(value);
-        }
-
-        None
     }
 
     /// Swaps memtable with fresh one and sends full table to dispatcher that syncronously write it to disk.

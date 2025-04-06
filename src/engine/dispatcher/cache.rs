@@ -263,7 +263,7 @@ impl Cache {
                 self.map.insert(key, cache_value);
             }
 
-            // Eviction failed, value won't be cached.
+            // Eiter it is inserted or not, we return here.
             return;
         }
 
