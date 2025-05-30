@@ -39,7 +39,7 @@ ratatui = { version = "0.29.0", features = ["crossterm"] }
 parking_lot = "0.12.3"
 ahash = "0.8.11"
 num-traits = "0.2.19"
-color-eyre = "0.6.3"
+color-eyre = "0.6.5"
 
 [dev-dependencies]
 criterion = "0.5.1"
