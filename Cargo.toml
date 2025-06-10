@@ -42,7 +42,7 @@ num-traits = "0.2.19"
 color-eyre = "0.6.5"
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion = "0.6.0"
 random-string = "1.1.0"
 strum = { version = "0.27.1", features = ["derive"] }
 tracing-test = "0.2.5"
