@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3.19", features = ["fmt", "ansi", "env-filte
 uuid = { version = "1.16.0", features = ["v7"] }
 strum = { version = "0.27.1", features = ["derive"] }
 ratatui = { version = "0.29.0", features = ["crossterm"] }
-parking_lot = "0.12.3"
+parking_lot = "0.12.4"
 ahash = "0.8.11"
 num-traits = "0.2.19"
 color-eyre = "0.6.5"
