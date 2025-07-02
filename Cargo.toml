@@ -27,7 +27,7 @@ rand = "0.9.1"
 clap = { version = "4.5.40", features = ["derive"] }
 crc32fast = "1.4.2"
 futures = { version = "0.3.31", features = ["thread-pool"] }
-tokio = { version = "1.45.0", features = ["full", "tracing"] }
+tokio = { version = "1.46.0", features = ["full", "tracing"] }
 socket2 = "0.5.10"
 tokio-stream = { version = "0.1.17", features = ["full"] }
 tokio-util = { version = "0.7.15", features = ["full"] }
