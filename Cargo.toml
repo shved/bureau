@@ -23,7 +23,7 @@ harness = false
 anyhow = "1.0.98"
 bloomfilter = "3.0.1"
 bytes = "1.10.1"
-rand = "0.9.1"
+rand = "0.9.2"
 clap = { version = "4.5.45", features = ["derive"] }
 crc32fast = "1.4.2"
 futures = { version = "0.3.31", features = ["thread-pool"] }
