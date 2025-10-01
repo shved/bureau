@@ -20,7 +20,7 @@ name = "search_in_block"
 harness = false
 
 [dependencies]
-anyhow = "1.0.98"
+anyhow = "1.0.100"
 bloomfilter = "3.0.1"
 bytes = "1.10.1"
 rand = "0.9.2"
